@@ -41,6 +41,10 @@ class RuleBasedExpenseCategorizer:
                 "ABARROTES",
                 "ALBERTSONS",
                 "ALIMENTOS AL DETALLE",
+                "MERPAGO*LAPURAVIDA",
+                "MERPAGO*SAMANTHABELTRA",
+                "MERPAGO*EFREN",
+                "MERPAGO*GRANCHINA",
             ],
             "Restaurants": [
                 "RESTAURANT",
@@ -135,6 +139,8 @@ class RuleBasedExpenseCategorizer:
                 "TUTTI FRUTTI",
                 "HOTDOGS",
                 "CAYOMANGO",
+                "EL PARGO ROJO",
+                "PIZZERIA",
             ],
             "Pharmacy/Health": [
                 "MEDICAL",
@@ -170,6 +176,7 @@ class RuleBasedExpenseCategorizer:
                 "ARCO",
                 "SPEEDWAY 1169",
                 "SPEEDWAY 46268",
+                "RCH AEROPUERTO",
             ],
             "Car Maintenance": [
                 "GREASE MONKEY",
@@ -180,6 +187,7 @@ class RuleBasedExpenseCategorizer:
                 "CARWASH",
                 "TIRES",
                 "AUTOPART DETA",
+                "CHAPMAN HONDA",
             ],
             "Utilities": [
                 "AZ MVD FEE",
@@ -191,13 +199,15 @@ class RuleBasedExpenseCategorizer:
                 "ELECTRICIDAD",
                 "TUCSON WATER",
                 "COX",
-                "ATT*",
+                "ATT",
                 "INTUIT",
                 "COSTCO *ANNUAL RENEWAL",
                 "Netflix",
                 "PROGRESSIVE",
                 "LAURA PILATES",
                 "AT&T",
+                "Empire Vista Assn Dues",
+                "PAY-HOA ASSESSMENTS",
             ],
             "Home Improvement": [
                 "HOME DEPOT",
@@ -212,6 +222,7 @@ class RuleBasedExpenseCategorizer:
                 "COMEX",
                 "HERRAJES",
                 "MATERIALES",
+                "PIPESO",
             ],
             "Shopping": [
                 "BURLINGTON",
@@ -259,6 +270,8 @@ class RuleBasedExpenseCategorizer:
                 "Carrazco LLC",
                 "TEXAS GENERAL STORE",
                 "JCPENNEY",
+                "CARTER'S",
+                "MEGA EDER",
             ],
             "Travel": [
                 "VIVAAEROB",
@@ -273,7 +286,12 @@ class RuleBasedExpenseCategorizer:
                 "PARKING",
                 "THE BRIDGE TRAVEL",
             ],
-            "Digital Subscriptions": ["NETFLIX", "GOOGLE ONE", "EPICGAMES"],
+            "Digital Subscriptions": [
+                "NETFLIX",
+                "GOOGLE ONE",
+                "EPICGAMES",
+                "KWS AGE CHECK",
+            ],
             "Entertainment": [
                 "AMC 2698 FOOTHILLS 15",
                 "ANGEL WWW.ANGEL.COMUT",
@@ -292,9 +310,15 @@ class RuleBasedExpenseCategorizer:
                 "UPS",
                 "PIMA FEDERAL CREDIT",
                 "USPS",
+                "Bank of America Mortgage",
+                "Canterbury Ranch Assn Dues",
+                "Valencia Reserve Hoa Dues",
             ],
             "Payments": [
                 "AUTOPAY AUTO-PMT",
+            ],
+            "Transfers": [
+                "Recurring Transfer From Jpmorgan Chase Bank",
             ],
         }
         desc = str(description)
