@@ -6,7 +6,7 @@ class Summarizer:
         # Fill NaN values with 0 and calculate net amount (Debit - Credit)
         summary["Debit"] = summary["Debit"].fillna(0)
         summary["Credit"] = summary["Credit"].fillna(0)
-        summary["Net"] = summary["Debit"] + summary["Credit"]
+        summary["Net"] = summary["Credit"] - summary["Debit"]
         # Sort by net amount descending
         summary = summary.sort_values(by="Net", ascending=False)
         return summary

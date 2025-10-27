@@ -7,7 +7,7 @@ from personal_expenses_app.core.rule_based_expense_categorizer import (
 )
 
 
-class CsvFileLoader:
+class CitiFileLoader:
     def __init__(self):
         super().__init__()
 
@@ -25,6 +25,7 @@ class CsvFileLoader:
             raise FileNotFoundError(f"File not found: {filename}")
         df = pd.read_csv(filename)
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
+        df["Credit"] = df["Credit"].abs()
         return df[df["Credit"].notnull()]
 
     @staticmethod
@@ -39,6 +40,7 @@ class CsvFileLoader:
         df = pd.read_csv(filename)
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
+        df["Credit"] = df["Credit"].abs()
 
         # Only return rows that have either a debit or credit (not both null)
         return df[df["Debit"].notnull() | df["Credit"].notnull()]
@@ -47,7 +49,7 @@ class CsvFileLoader:
     def load_and_label_multiple_files(file_list):
         all_expenses = []
         categorized_expenses = RuleBasedExpenseCategorizer()
-        csv_file_loader = CsvFileLoader()
+        csv_file_loader = CitiFileLoader()
         for filename in file_list:
             if os.path.exists(filename):
                 df = csv_file_loader.load_expenses_and_credits(filename)
