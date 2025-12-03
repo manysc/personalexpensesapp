@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -8,7 +7,8 @@ from personal_expenses_app.core.ml_based_expense_categorizer import (
     MLBasedExpenseCategorizer,
 )
 from personal_expenses_app.core.summarizer import Summarizer
-from personal_expenses_app.infrastructure.csv_file_loader import CitiFileLoader
+from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
+from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
 from personal_expenses_app.infrastructure.file_persistence import FilePersistence
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import (
     WellsfargoFileLoader,
@@ -20,10 +20,10 @@ def pipeline():
     # 1. Load and label all data for model training
     # Get the project root directory (2 levels up from this file)
     project_root = Path(__file__).parent.parent.parent
-    resources_dir = project_root / "resources" / "citi"
 
-    file_list = [
-        str(resources_dir / f"citi-{month}-2025.CSV")
+    citi_resources_dir = project_root / "resources" / "citi"
+    citi_file_list = [
+        str(citi_resources_dir / f"citi-{month}-2025.CSV")
         for month in [
             "jan",
             "feb",
@@ -38,10 +38,10 @@ def pipeline():
         ]
     ]
     citi_file_loader = CitiFileLoader()
-    citi_expenses = citi_file_loader.load_and_label_multiple_files(file_list)
+    citi_expenses = citi_file_loader.load_and_label_multiple_files(citi_file_list)
 
     wellsfargo_resources_dir = project_root / "resources" / "wellsfargo"
-    wells_fargo_file_list = [
+    wellsfargo_file_list = [
         str(wellsfargo_resources_dir / f"wellsfargo-{month}-2025.pdf")
         for month in [
             "jan",
@@ -58,10 +58,31 @@ def pipeline():
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
     wellsfargo_expenses = wellsfargo_file_loader.load_and_label_multiple_files(
-        wells_fargo_file_list
+        wellsfargo_file_list
     )
     # append Wellsfargo expenses to Citi expenses
     citi_expenses = pd.concat([citi_expenses, wellsfargo_expenses])
+
+    chase_resources_dir = project_root / "resources" / "chase"
+    chase_file_list = [
+        str(chase_resources_dir / f"chase-{month}-2025.pdf")
+        for month in [
+            "jan",
+            "feb",
+            "mar",
+            "apr",
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+        ]
+    ]
+    chase_file_loader = ChaseFileLoader()
+    chase_expenses = chase_file_loader.load_and_label_multiple_files(chase_file_list)
+    # append Chase expenses to Citi expenses
+    citi_expenses = pd.concat([citi_expenses, chase_expenses])
 
     ml_based_expense_categorizer = MLBasedExpenseCategorizer()
     training_data = ml_based_expense_categorizer.prepare_training_data(citi_expenses)
@@ -78,12 +99,18 @@ def pipeline():
     cat_acc = ml_based_expense_categorizer.evaluate_model(model, X_test, y_test)
 
     # 4. Predict on files from file_list
-    for index, filename in enumerate(file_list):
+    for index, filename in enumerate(citi_file_list):
         df = citi_file_loader.load_expenses_and_credits(filename)
 
-        if index < len(wells_fargo_file_list):
+        if index < len(wellsfargo_file_list):
             df_others = wellsfargo_file_loader.load_expenses_and_credits(
-                wells_fargo_file_list[index]
+                wellsfargo_file_list[index]
+            )
+            df = pd.concat([df, df_others], ignore_index=True)
+
+        if index < len(chase_file_list):
+            df_others = chase_file_loader.load_expenses_and_credits(
+                chase_file_list[index]
             )
             df = pd.concat([df, df_others], ignore_index=True)
 
@@ -127,6 +154,7 @@ def pipeline():
         summary["Month"] = month
         summary["Year"] = year
         user_interaction.print_summary(summary)
+        user_interaction.print_total(summary)
 
 
 if __name__ == "__main__":

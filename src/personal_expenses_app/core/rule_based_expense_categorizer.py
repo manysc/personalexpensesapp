@@ -46,6 +46,9 @@ class RuleBasedExpenseCategorizer:
                 "MERPAGO*EFREN",
                 "MERPAGO*GRANCHINA",
             ],
+            "Reyna": [
+                "Zelle Payment To Reyna"
+            ],
             "Restaurants": [
                 "RESTAURANT",
                 "CAFE",
@@ -141,6 +144,8 @@ class RuleBasedExpenseCategorizer:
                 "CAYOMANGO",
                 "EL PARGO ROJO",
                 "PIZZERIA",
+                "Payment To Rene",
+                "Payment To Ulises"
             ],
             "Pharmacy/Health": [
                 "MEDICAL",
@@ -156,6 +161,7 @@ class RuleBasedExpenseCategorizer:
                 "KATS",
                 "DANIZA SAL",
                 "WALGREENS",
+                "Planet Fitness"
             ],
             "Transport/Gas": [
                 "GAS",
@@ -208,6 +214,11 @@ class RuleBasedExpenseCategorizer:
                 "AT&T",
                 "Empire Vista Assn Dues",
                 "PAY-HOA ASSESSMENTS",
+                "Dbamr.Cooper",
+                "Honda Pmt",
+                "Tep Corporate",
+                "Southwest Gas Billpay",
+                "Zelle Payment To 5204278933"
             ],
             "Home Improvement": [
                 "HOME DEPOT",
@@ -272,6 +283,7 @@ class RuleBasedExpenseCategorizer:
                 "JCPENNEY",
                 "CARTER'S",
                 "MEGA EDER",
+                "Zelle Payment To Brianna",
             ],
             "Travel": [
                 "VIVAAEROB",
@@ -313,13 +325,38 @@ class RuleBasedExpenseCategorizer:
                 "Bank of America Mortgage",
                 "Canterbury Ranch Assn Dues",
                 "Valencia Reserve Hoa Dues",
-            ],
-            "Payments": [
-                "AUTOPAY AUTO-PMT",
+                "Pima Fcu Transfer",
+                "Zelle Payment To Karina",
+                "Zelle Payment To Ruben Soto",
+                "Zelle Payment To D&C Maintenance LLC",
+                "Zelle Payment To Carmen",
+                "Zelle Payment To Ricardo",
+                "Zelle Payment To Noe"
             ],
             "Transfers": [
+                "AUTOPAY AUTO-PMT",
+                "Citi Autopay Payment",
                 "Recurring Transfer From Jpmorgan Chase Bank",
+                "Wells Fargo Ifi DDA To DDA",
+                "Transfer To Sav",
+                "Xoom Debit",
+                "Online Domestic Wire Transfer",
+                "ATM Cash Deposit",
+                "Zelle Payment From Rene",
+                "Zelle Payment From Savannah"
             ],
+            "Income": [
+                "Modular Mining S Payroll",
+                "Remote Online Deposit",
+                "Costco Cash Reward",
+                "Payment From Yolanda",
+                "Payment From Carmen",
+                "Payment From Yesenia",
+                "Payment From Noe",
+                "Payment From Jose",
+                "Payment From Allan",
+                "Tax Ref"
+            ]
         }
         desc = str(description)
         for cat, keywords in categories.items():
