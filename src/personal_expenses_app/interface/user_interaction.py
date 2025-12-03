@@ -18,3 +18,16 @@ class UserInteraction:
         summary = summary.drop(columns=['Month', 'Year'], errors='ignore')
         print(summary)
         print("")
+
+
+    @staticmethod
+    def print_total(summary):
+        # drop Transfers if exists
+        summary = summary[summary['Category'] != 'Transfers'] if 'Category' in summary.columns else summary
+        total_debit = summary['Debit'].sum()
+        total_credit = summary['Credit'].sum()
+        net = total_credit - total_debit
+        print(f"\n===== Total Summary =====")
+        print(f"Total Debit: ${total_debit:,.2f}")
+        print(f"Total Credit: ${total_credit:,.2f}")
+        print(f"Net Amount (Credit - Debit): ${net:,.2f}\n")
