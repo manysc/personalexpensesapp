@@ -21,7 +21,7 @@ def pipeline():
 
     citi_resources_dir = project_root / "resources" / "citi"
     citi_file_list = [
-        str(citi_resources_dir / f"citi-{month}-2025.CSV")
+        str(citi_resources_dir / f"citi-{month}-2025.pdf")
         for month in [
             "jan",
             "feb",
@@ -33,6 +33,8 @@ def pipeline():
             "aug",
             "sep",
             "oct",
+            "nov",
+            "dec"
         ]
     ]
     citi_file_loader = CitiFileLoader()
@@ -51,6 +53,8 @@ def pipeline():
             "aug",
             "sep",
             "oct",
+            "nov",
+            "dec"
         ]
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
@@ -69,6 +73,8 @@ def pipeline():
             "aug",
             "sep",
             "oct",
+            "nov",
+            "dec"
         ]
     ]
     chase_file_loader = ChaseFileLoader()
