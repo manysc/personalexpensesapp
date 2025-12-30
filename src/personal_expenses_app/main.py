@@ -8,7 +8,7 @@ from personal_expenses_app.core.ml_based_expense_categorizer import (
 )
 from personal_expenses_app.core.summarizer import Summarizer
 from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
-from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
+from personal_expenses_app.infrastructure.citi_csv_file_loader import CitiCsvFileLoader
 from personal_expenses_app.infrastructure.file_persistence import FilePersistence
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import (
     WellsfargoFileLoader,
@@ -37,7 +37,7 @@ def pipeline():
             "oct",
         ]
     ]
-    citi_file_loader = CitiFileLoader()
+    citi_file_loader = CitiCsvFileLoader()
     citi_expenses = citi_file_loader.load_and_label_multiple_files(citi_file_list)
 
     wellsfargo_resources_dir = project_root / "resources" / "wellsfargo"

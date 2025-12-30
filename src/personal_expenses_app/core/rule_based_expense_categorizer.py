@@ -45,6 +45,10 @@ class RuleBasedExpenseCategorizer:
                 "MERPAGO*SAMANTHABELTRA",
                 "MERPAGO*EFREN",
                 "MERPAGO*GRANCHINA",
+                "CARNICERIA",
+                "ABARR TACUPETITO",
+                "WHOLEFDS SPE",
+                "PILOT 593"
             ],
             "Reyna": [
                 "Zelle Payment To Reyna"
@@ -55,7 +59,6 @@ class RuleBasedExpenseCategorizer:
                 "BURGER",
                 "PIZZA",
                 "DOGUITOS",
-                "LOS",
                 "KFC",
                 "MCDONALD",
                 "McDonalds",
@@ -91,7 +94,6 @@ class RuleBasedExpenseCategorizer:
                 "ICE CREAM",
                 "TIANA'S PALACE",
                 "CHURRO",
-                "ICE",
                 "SNACK",
                 "CANDY",
                 "THE COVE ON HARBOR",
@@ -104,7 +106,7 @@ class RuleBasedExpenseCategorizer:
                 "CHICKENUEVO",
                 "DINER",
                 "DUNKIN",
-                "BREW",
+                "BREW CITY BRAND",
                 "MARISCOS",
                 "SARKU",
                 "GOLDEN CORRAL",
@@ -141,11 +143,25 @@ class RuleBasedExpenseCategorizer:
                 "BURRITO",
                 "TUTTI FRUTTI",
                 "HOTDOGS",
+                "HOT DOGS",
                 "CAYOMANGO",
                 "EL PARGO ROJO",
                 "PIZZERIA",
+                "PURO PA DELANTE",
+                "COYOTAS DONA MARIA",
+                "GIBSON GIRL ICE",
+                "NIKKORI",
+                "CUPBOP KINO",
+                "SWEETTOMATOES",
+                "BUFFET",
+                "BISBEE BREAKFAST",
+                "KRISPY KREME",
+                "FOOD STAREVENT",
+                "KE BURROS",
                 "Payment To Rene",
-                "Payment To Ulises"
+                "Payment To Ulises",
+                "Payment To Perro Loco Ajo",
+                "Payment From Luz Venegas"
             ],
             "Pharmacy/Health": [
                 "MEDICAL",
@@ -161,7 +177,10 @@ class RuleBasedExpenseCategorizer:
                 "KATS",
                 "DANIZA SAL",
                 "WALGREENS",
-                "Planet Fitness"
+                "Planet Fitness",
+                "GENERAL DE LA BELLEZA",
+                "SHELO NABEL HERMOSILLO",
+                "FITMAX"
             ],
             "Transport/Gas": [
                 "GAS",
@@ -182,7 +201,9 @@ class RuleBasedExpenseCategorizer:
                 "ARCO",
                 "SPEEDWAY 1169",
                 "SPEEDWAY 46268",
+                "SPEEDWAY 46280",
                 "RCH AEROPUERTO",
+                "UBRPAGOSMEX"
             ],
             "Car Maintenance": [
                 "GREASE MONKEY",
@@ -194,6 +215,8 @@ class RuleBasedExpenseCategorizer:
                 "TIRES",
                 "AUTOPART DETA",
                 "CHAPMAN HONDA",
+                "AUTOZONE",
+                "O'REILLY"
             ],
             "Utilities": [
                 "AZ MVD FEE",
@@ -213,11 +236,13 @@ class RuleBasedExpenseCategorizer:
                 "LAURA PILATES",
                 "AT&T",
                 "Empire Vista Assn Dues",
+                "EMPIRE 8145",
                 "PAY-HOA ASSESSMENTS",
                 "Dbamr.Cooper",
                 "Honda Pmt",
                 "Tep Corporate",
                 "Southwest Gas Billpay",
+                "GOB EDO SONORA",
                 "Zelle Payment To 5204278933"
             ],
             "Home Improvement": [
@@ -228,12 +253,16 @@ class RuleBasedExpenseCategorizer:
                 "LOWES",
                 "SHERWIN-WILLIAMS",
                 "FERRE",
+                "FERR KIOSKO MORELOS",
                 "ACE",
                 "RUBBERIZED COAT",
                 "COMEX",
                 "HERRAJES",
                 "MATERIALES",
                 "PIPESO",
+                "PROCONSA PROGRESO",
+                "LOS REALES SCALES",
+                "HARBOR FREIGHT"
             ],
             "Shopping": [
                 "BURLINGTON",
@@ -283,6 +312,14 @@ class RuleBasedExpenseCategorizer:
                 "JCPENNEY",
                 "CARTER'S",
                 "MEGA EDER",
+                "OADPRS MU",
+                "ZAZUETA COMERCIAL",
+                "POINTMP*REGALOS",
+                "HABISTORE",
+                "Nike US Stores",
+                "TEKBUY",
+                "COPPEL",
+                "TELCEL HERMOSILLO",
                 "Zelle Payment To Brianna",
             ],
             "Travel": [
@@ -315,6 +352,9 @@ class RuleBasedExpenseCategorizer:
                 "GRUTAS",
                 "PARKS",
                 "Elevate South Tucson",
+                "TCC",
+                "UNVRS* TUCSON HOLID",
+                "GALLEGOINTERMEDIAT"
             ],
             "Real State": [
                 "AZ CORP COMMISSION",
@@ -326,12 +366,13 @@ class RuleBasedExpenseCategorizer:
                 "Canterbury Ranch Assn Dues",
                 "Valencia Reserve Hoa Dues",
                 "Pima Fcu Transfer",
-                "Zelle Payment To Karina",
-                "Zelle Payment To Ruben Soto",
-                "Zelle Payment To D&C Maintenance LLC",
-                "Zelle Payment To Carmen",
-                "Zelle Payment To Ricardo",
-                "Zelle Payment To Noe"
+                "Payment To Karina",
+                "Payment To Ruben Soto",
+                "Payment To D&C Maintenance LLC",
+                "Payment To Carmen",
+                "Payment To Ricardo",
+                "Payment To Noe",
+                "Payment To Francisco Herrera"
             ],
             "Transfers": [
                 "AUTOPAY AUTO-PMT",
@@ -360,10 +401,17 @@ class RuleBasedExpenseCategorizer:
         }
         desc = str(description)
         for cat, keywords in categories.items():
-            if any(k in desc for k in keywords):
-                return cat
+            for k in keywords:
+                if k in desc:
+                    return cat
+        print(f"Could not categorize '{desc}'")
         return "Other"
 
     def categorize_expenses(self, df):
         df["Category"] = df["Description"].apply(self._rule_based_categorization)
+        # print description with amount and category for debugging
+        # for index, row in df.iterrows():
+        #     print(
+        #         f"Date: {row['Date']},Description: {row['Description']}, Debit: {row['Debit']}, Credit: {row['Credit']}, Category: {row['Category']}"
+        #     )
         return df
