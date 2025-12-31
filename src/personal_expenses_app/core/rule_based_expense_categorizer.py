@@ -161,7 +161,10 @@ class RuleBasedExpenseCategorizer:
                 "Payment To Rene",
                 "Payment To Ulises",
                 "Payment To Perro Loco Ajo",
-                "Payment From Luz Venegas"
+                "Payment From Luz Venegas",
+                "MARIA MAGDALENA,VALENZUELA/ROMO",
+                "BRIANEN,BALDENEGRO/BALDENEGRO",
+                "JOSE MARTIN,ACEVEDO/ACEVEDO"
             ],
             "Pharmacy/Health": [
                 "MEDICAL",
@@ -180,7 +183,8 @@ class RuleBasedExpenseCategorizer:
                 "Planet Fitness",
                 "GENERAL DE LA BELLEZA",
                 "SHELO NABEL HERMOSILLO",
-                "FITMAX"
+                "FITMAX",
+                "PELUQUERO"
             ],
             "Transport/Gas": [
                 "GAS",
@@ -334,6 +338,8 @@ class RuleBasedExpenseCategorizer:
                 "PARKMOBILE",
                 "PARKING",
                 "THE BRIDGE TRAVEL",
+                "CASA/KINO",
+                "ALMA ANAHI LIZARRAGA"
             ],
             "Digital Subscriptions": [
                 "NETFLIX",
@@ -384,7 +390,10 @@ class RuleBasedExpenseCategorizer:
                 "Online Domestic Wire Transfer",
                 "ATM Cash Deposit",
                 "Zelle Payment From Rene",
-                "Zelle Payment From Savannah"
+                "Zelle Payment From Savannah",
+                "PAGO RECIBIDO DE TESORED POR ORDEN DE MANUEL SALAS",
+                "DIS.EFE.BANAMEX SAB MIRADOR",
+                "DIS.EFE.BANAMEX EL MIRADOR 2"
             ],
             "Income": [
                 "Modular Mining S Payroll",
@@ -397,6 +406,9 @@ class RuleBasedExpenseCategorizer:
                 "Payment From Jose",
                 "Payment From Allan",
                 "Tax Ref"
+            ],
+            "Papas": [
+                "GRACIELA,CARDENAS/QUINTERO",
             ]
         }
         desc = str(description)

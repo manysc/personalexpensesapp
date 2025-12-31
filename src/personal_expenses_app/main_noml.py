@@ -6,6 +6,7 @@ from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
 from personal_expenses_app.core.summarizer import Summarizer
+from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFileLoader
 from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
 from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import (
@@ -79,6 +80,26 @@ def pipeline():
     ]
     chase_file_loader = ChaseFileLoader()
 
+    banamex_resources_dir = project_root / "resources" / "banamex"
+    banamex_file_list = [
+        str(banamex_resources_dir / f"banamex-{month}-2025.pdf")
+        for month in [
+            "jan",
+            "feb",
+            "mar",
+            "apr",
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec"
+        ]
+    ]
+    banamex_file_loader = BanamexFileLoader()
+
     categorized_expenses = RuleBasedExpenseCategorizer()
     user_interaction = UserInteraction()
     summarizer = Summarizer()
@@ -99,6 +120,16 @@ def pipeline():
             )
             df = pd.concat([df, df_others], ignore_index=True)
 
+        if index < len(banamex_file_list):
+            df_others = banamex_file_loader.load_expenses_and_credits(
+                banamex_file_list[index]
+            )
+            df = pd.concat([df, df_others], ignore_index=True)
+
+        if df is None or df.empty:
+            print(f"No data loaded for file: {filename}")
+            continue
+        
         # Categorize expenses based on rules
         labeled_expenses = categorized_expenses.categorize_expenses(df)
 
