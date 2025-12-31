@@ -216,6 +216,7 @@ class CitiFileLoader:
             in_payments_section = False  # Track if we're in Payments, Credits and Adjustments
             current_cardholder = None
             pending_description = None  # For multi-line transactions
+            skip_next_line = False  # Track if we should skip the next line (used by Pattern 3)
 
             for page in pdf.pages:
                 text = page.extract_text()
@@ -226,6 +227,11 @@ class CitiFileLoader:
 
                 for i, line in enumerate(lines):
                     line_stripped = line.strip()
+
+                    # Check if we should skip this line (set by Pattern 3 in previous iteration)
+                    if skip_next_line:
+                        skip_next_line = False
+                        continue
 
                     # Detect cardholder sections
                     if "MANUEL SALAS" in line and "Card ending in" not in line:
@@ -362,15 +368,57 @@ class CitiFileLoader:
 
                     # Skip header and separator lines
                     # Also skip Costco Cash Back Rewards summary lines (e.g., "Total Earned:", "Earned this period")
-                    if (
+                    # BUT don't skip if previous line looks like a merchant description (part of multi-line transaction)
+                    # OR if a MEXICAN PESO line follows within a few lines (indicating foreign currency transaction)
+                    should_skip_header = (
                         not line_stripped
                         or "Sale Post" in line
                         or "Date Date Description Amount" in line
                         or "Balance:" in line
                         or "New Charges" in line
-                        or "Total Earned:" in line
                         or "Earned this period" in line
-                    ):
+                    )
+                    
+                    # Special handling for "Total Earned:" - only skip if it's a standalone summary line
+                    # Don't skip if:
+                    # 1. Previous line is a merchant description (indicating multi-line transaction)
+                    # 2. A MEXICAN PESO line appears within next 3 lines (foreign currency transaction)
+                    # 3. Line is a valid transaction with amount before "Total Earned:" text
+                    if "Total Earned:" in line:
+                        # Check if this is a valid transaction line (starts with date and has amount before "Total Earned:")
+                        # Example: "02/19 02/19 QT 1499 OUTSIDE TUCSON AZ $32.10 Total Earned: $61.68"
+                        is_valid_transaction = False
+                        if re.match(r"^\d{1,2}/\d{1,2}", line_stripped):
+                            # Check if there's an amount before "Total Earned:"
+                            before_total_earned = line_stripped.split("Total Earned:")[0]
+                            if re.search(r"\$[\d,]+\.\d{2}", before_total_earned):
+                                is_valid_transaction = True
+                        
+                        # Check if previous line is a description (no date, looks like merchant name)
+                        prev_is_description = False
+                        if i > 0:
+                            prev_line = lines[i-1].strip()
+                            # Previous line is a description if it doesn't start with a date and is substantial
+                            if (prev_line and not re.match(r"^\d{1,2}/\d{1,2}", prev_line) 
+                                and len(prev_line) > 5
+                                and "MEXICAN PESO" not in prev_line
+                                and prev_line[0].isupper()):
+                                prev_is_description = True
+                        
+                        # Check if a MEXICAN PESO line follows (foreign currency transaction)
+                        has_peso_following = False
+                        for j in range(1, min(4, len(lines) - i)):
+                            next_line = lines[i+j].strip()
+                            if "MEXICAN PESO" in next_line:
+                                has_peso_following = True
+                                break
+                        
+                        # Only skip if it's NOT part of a multi-line or foreign currency transaction
+                        # AND not a valid transaction with amount before "Total Earned:"
+                        if not prev_is_description and not has_peso_following and not is_valid_transaction:
+                            should_skip_header = True
+                    
+                    if should_skip_header:
                         continue
                     
                     # Check if this is just a date on its own line (for multi-line descriptions)
@@ -447,12 +495,17 @@ class CitiFileLoader:
                     # This handles cases like:
                     # 1. "BREW CITY BRAND - AIRPORTMILWAUKEE" followed by "02/28 02/28 $23.74"
                     # 2. "THE WINDOW DEPOT BRANCH 3520-7753142" followed by "01/24 $1,373.97 Total Earned: $100.73"
+                    # 3. "GOB EDO SONORA E COM HERMOSILLO" followed by "12/20 Total Earned: $63.02" then "SOMX" then peso amount
+                    # BUT exclude continuation lines like "WWW.AMAZON.COWA" (URL fragments, all uppercase single word)
                     if (not re.match(r"^\d{1,2}/\d{1,2}", line_stripped) 
                         and len(line_stripped) > 5
                         and not line_stripped.lower().startswith("cont'd")
                         and not line_stripped.startswith("Page ")
-                        and line_stripped[0].isupper()):
+                        and line_stripped[0].isupper()
+                        and not re.match(r"^WWW\.", line_stripped, re.IGNORECASE)  # Exclude URL fragments
+                        and len(line_stripped.split()) >= 2):  # Must have at least 2 words (not just "SOMX" or "WWW.AMAZON.COWA")
                         # Check if next line has the pattern: two dates + amount only OR single date + amount
+                        # OR if next line starts with date AND a MEXICAN PESO line follows (foreign currency)
                         if i + 1 < len(lines):
                             next_line = lines[i + 1].strip()
                             # Pattern 1: two dates + amount only (e.g., "02/28 02/28 $23.74")
@@ -467,11 +520,32 @@ class CitiFileLoader:
                                 # We'll use date_only_match logic to handle it, but mark description as pending
                                 pending_description = line_stripped
                                 continue
+                            # Pattern 3: next line starts with date AND a MEXICAN PESO line follows within 3 lines
+                            # This handles foreign currency transactions with multi-line descriptions
+                            elif re.match(r"^\d{1,2}/\d{1,2}", next_line):
+                                # Check if a MEXICAN PESO line appears within next few lines
+                                has_peso_following = False
+                                for j in range(1, min(5, len(lines) - i)):
+                                    check_line = lines[i+j].strip()
+                                    if "MEXICAN PESO" in check_line:
+                                        has_peso_following = True
+                                        break
+                                
+                                if has_peso_following:
+                                    # Save as pending description with the date from next line
+                                    date_match = re.match(r"^(\d{1,2}/\d{1,2})", next_line)
+                                    if date_match:
+                                        pending_description = f"{date_match.group(1)} {line_stripped}"
+                                        # Skip the next line (the date + text line) since we extracted the date from it
+                                        skip_next_line = True
+                                        continue
 
                     # Check if we have a pending description and current line is date + amount
                     # This handles: description on previous line, then "MM/DD $Amount [optional extra text]"
                     # Example: "THE WINDOW DEPOT BRANCH..." followed by "01/24 $1,373.97 Total Earned: $100.73"
-                    if pending_description and re.match(r"^\d{1,2}/\d{1,2}\s+(-?\$?[\d,]+\.\d{2})", line_stripped):
+                    # IMPORTANT: Only match single date + amount, NOT two dates (Format 1 transactions)
+                    # Use negative lookahead to exclude lines with two dates
+                    if pending_description and re.match(r"^\d{1,2}/\d{1,2}\s+(?!\d{1,2}/\d{1,2})(-?\$?[\d,]+\.\d{2})", line_stripped):
                         date_amount_match = re.match(r"^(\d{1,2}/\d{1,2})\s+(-?\$?[\d,]+\.\d{2})", line_stripped)
                         if date_amount_match:
                             transaction_date = date_amount_match.group(1)
@@ -502,7 +576,9 @@ class CitiFileLoader:
                     if transaction == "PARTIAL":
                         # This is a line with date and description but no amount
                         # Save the description for the next line
-                        pending_description = line_stripped
+                        # BUT don't overwrite if already set (e.g., by Pattern 3 in description-only detection)
+                        if not pending_description:
+                            pending_description = line_stripped
                         continue
                     elif transaction and isinstance(transaction, dict):
                         # Check if this transaction needs a description from previous line
