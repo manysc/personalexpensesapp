@@ -631,6 +631,7 @@ class CitiFileLoader:
         df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce")
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
+        df["Bank"] = "citi"
 
         # Sort by date
         df = df.sort_values("Date").reset_index(drop=True)
