@@ -108,7 +108,9 @@ class BanamexFileLoader:
 
                     # Detect page boundaries - don't finalize transaction, just reset section flag
                     # Transactions can span multiple pages, so keep current_transaction alive
-                    if line_stripped.startswith("Pägina ") or line_stripped.startswith("Página "):
+                    # Some pages start with "Centro de Atención Telefónica Página X de Y" so match
+                    # anywhere in the line, not just at the start.
+                    if re.search(r"Página \d+ de \d+", line_stripped):
                         in_transaction_section = False
                         continue
 
@@ -119,6 +121,8 @@ class BanamexFileLoader:
                         or line_stripped.startswith("000")
                         or "Detalle de Operaciones" in line
                         or "En pesos Moneda Nacional" in line
+                        or line_stripped.startswith("Ciudad de México:")
+                        or line_stripped.startswith("Resto del país:")
                     ):
                         continue
 
@@ -206,12 +210,13 @@ class BanamexFileLoader:
 
         if not all_transactions:
             logger.warning(f"No transactions found in PDF: {filename}")
-            return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit"])
+            return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Bank"])
 
         df = pd.DataFrame(all_transactions)
         df["Date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors="coerce")
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
+        df["Bank"] = "banamex"
 
         # Sort by date
         df = df.sort_values("Date").reset_index(drop=True)

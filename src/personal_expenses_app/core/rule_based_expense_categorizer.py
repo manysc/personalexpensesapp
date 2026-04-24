@@ -6,11 +6,37 @@ class RuleBasedExpenseCategorizer:
         super().__init__()
 
     @staticmethod
-    def _rule_based_categorization(description):
+    def _log_uncategorized_expense(row):
+        """Log an expense that could not be categorized with full details."""
+        print(
+            f"WARNING: Could not categorize expense: "
+            f"Date: {row['Date']}, "
+            f"Bank: {row['Bank']}, "
+            f"Description: {row['Description']}, "
+            f"Debit: {row['Debit']}, "
+            f"Credit: {row['Credit']}"
+        )
+
+    @staticmethod
+    def _print_expense_details(row):
+        """Format and print expense details for debugging."""
+        print(
+            f"Date: {row['Date']}, "
+            f"Bank: {row['Bank']}, "
+            f"Description: {row['Description']}, "
+            f"Debit: {row['Debit']}, "
+            f"Credit: {row['Credit']}, "
+            f"Category: {row['Category']}"
+        )
+
+    @staticmethod
+    def _rule_based_categorization(row):
+        description = row["Description"]
         categories = {
             "Groceries": [
                 "WALMART",
                 "WAL-MART",
+                "WAL MART",
                 "HEB",
                 "SUPER",
                 "MERCADO",
@@ -47,8 +73,8 @@ class RuleBasedExpenseCategorizer:
                 "MERPAGO*GRANCHINA",
                 "CARNICERIA",
                 "ABARR TACUPETITO",
-                "WHOLEFDS SPE",
-                "PILOT 593"
+                "WHOLEFDS SPE",                
+                "S MART"
             ],
             "Reyna": [
                 "Zelle Payment To Reyna"
@@ -69,7 +95,7 @@ class RuleBasedExpenseCategorizer:
                 "FIVE GUYS",
                 "DENNY'S",
                 "TACO",
-                "LITTLE CAESARS",
+                "LITTLE CAESAR",
                 "RAISING CANES",
                 "MICHOACANA",
                 "PANIFICADORA",
@@ -103,6 +129,8 @@ class RuleBasedExpenseCategorizer:
                 "COCINA",
                 "PANADERIA",
                 "POINTMP*OCHOAS",
+                "YASAEL,OCHOA/OCHOA",
+                "MERPAGO*OCHOAS",
                 "CHICKENUEVO",
                 "DINER",
                 "DUNKIN",
@@ -164,7 +192,24 @@ class RuleBasedExpenseCategorizer:
                 "Payment From Luz Venegas",
                 "MARIA MAGDALENA,VALENZUELA/ROMO",
                 "BRIANEN,BALDENEGRO/BALDENEGRO",
-                "JOSE MARTIN,ACEVEDO/ACEVEDO"
+                "JOSE MARTIN,ACEVEDO/ACEVEDO",
+                "CARNITAS LA YOCA",
+                "NEVERIAPARQUE",
+                "7 ELEVEN",
+                "SUBWAY",
+                "CHIPOTLE",
+                "YOLOPAY*VENDING",
+                "TACARBON",
+                "CASA GARMENDIA",
+                "CHUERRERIA",
+                "DONVI",
+                "LOMASANMIGUEL",
+                "PILOT 593",
+                "APPLEBBEES",
+                "EL MANDIL SONORENSE",
+                "CITY SALADS",
+                "TCONE AGREGADOR",
+                "SALAD AND GO"
             ],
             "Pharmacy/Health": [
                 "MEDICAL",
@@ -184,7 +229,10 @@ class RuleBasedExpenseCategorizer:
                 "GENERAL DE LA BELLEZA",
                 "SHELO NABEL HERMOSILLO",
                 "FITMAX",
-                "PELUQUERO"
+                "PELUQUER",
+                "ESTET DON JUAN",
+                "EXPRESSSCRI",
+                "Highplanes Arena"
             ],
             "Transport/Gas": [
                 "GAS",
@@ -206,6 +254,7 @@ class RuleBasedExpenseCategorizer:
                 "SPEEDWAY 1169",
                 "SPEEDWAY 46268",
                 "SPEEDWAY 46280",
+                "SPEEDWAY 46261",
                 "RCH AEROPUERTO",
                 "UBRPAGOSMEX"
             ],
@@ -220,7 +269,9 @@ class RuleBasedExpenseCategorizer:
                 "AUTOPART DETA",
                 "CHAPMAN HONDA",
                 "AUTOZONE",
-                "O'REILLY"
+                "O'REILLY",
+                "RUBEN,IBARRA/TORRES",
+                "EVERARDO,BOJORQIEZ/SANDOVAL"
             ],
             "Utilities": [
                 "AZ MVD FEE",
@@ -232,9 +283,9 @@ class RuleBasedExpenseCategorizer:
                 "ELECTRICIDAD",
                 "TUCSON WATER",
                 "COX",
-                "ATT",
-                "INTUIT",
+                "ATT",                
                 "COSTCO *ANNUAL RENEWAL",
+                "Costco Annual",
                 "Netflix",
                 "PROGRESSIVE",
                 "LAURA PILATES",
@@ -245,7 +296,7 @@ class RuleBasedExpenseCategorizer:
                 "Dbamr.Cooper",
                 "Honda Pmt",
                 "Tep Corporate",
-                "Southwest Gas Billpay",
+                "Southwest Gas",
                 "GOB EDO SONORA",
                 "Zelle Payment To 5204278933"
             ],
@@ -266,7 +317,28 @@ class RuleBasedExpenseCategorizer:
                 "PIPESO",
                 "PROCONSA PROGRESO",
                 "LOS REALES SCALES",
-                "HARBOR FREIGHT"
+                "HARBOR FREIGHT",
+                "FLOOR AND DECOR",
+                "Payment To Karina",
+                "Payment To Ruben Soto",
+                "Payment To D&C Maintenance LLC",
+                "Payment To Carmen",
+                "Payment To Ricardo",
+                "Payment To Noe",
+                "Payment To Francisco Herrera",
+                "Payment To Jesus Encinas",
+                "Payment To Ezequiel Pina",
+                "Payment To Javier Herrera",
+                "Payment To Ruben Peralta",
+                "Payment To Efrain Carpintero",
+                "Payment To Kristin Manning",
+                "Payment To Manuel",
+                "Payment To Martin Pesqueira",
+                "Payment To Erick Gonzales",
+                "RAY READY MIX",
+                "IND METAL SUPPL",
+                "DJV HEATING COOLING",
+                "IMEXYACCESORIO"
             ],
             "Shopping": [
                 "BURLINGTON",
@@ -323,8 +395,11 @@ class RuleBasedExpenseCategorizer:
                 "Nike US Stores",
                 "TEKBUY",
                 "COPPEL",
-                "TELCEL HERMOSILLO",
-                "Zelle Payment To Brianna",
+                "TELCEL",
+                "Payment To Brianna",
+                "PAYPAL *EBAY",
+                "NOVEDAPICHAR",
+                "SUBURBIA"
             ],
             "Travel": [
                 "VIVAAEROB",
@@ -339,13 +414,19 @@ class RuleBasedExpenseCategorizer:
                 "PARKING",
                 "THE BRIDGE TRAVEL",
                 "CASA/KINO",
-                "ALMA ANAHI LIZARRAGA"
+                "ALMA ANAHI LIZARRAGA",
+                "MUSEO JUAN GABRIEL",
+                "ESTACION CARLOS AMAYA",
+                "TOURPORJUAREZ",
+                "USCIS"
             ],
             "Digital Subscriptions": [
                 "NETFLIX",
                 "GOOGLE ONE",
                 "EPICGAMES",
                 "KWS AGE CHECK",
+                "INTUIT",
+                "Intuit"
             ],
             "Entertainment": [
                 "AMC 2698 FOOTHILLS 15",
@@ -360,7 +441,9 @@ class RuleBasedExpenseCategorizer:
                 "Elevate South Tucson",
                 "TCC",
                 "UNVRS* TUCSON HOLID",
-                "GALLEGOINTERMEDIAT"
+                "GALLEGOINTERMEDIAT",
+                "SQ *CABALLERO",
+                "BOL SATELITE"                
             ],
             "Real State": [
                 "AZ CORP COMMISSION",
@@ -369,16 +452,21 @@ class RuleBasedExpenseCategorizer:
                 "PIMA FEDERAL CREDIT",
                 "USPS",
                 "Bank of America Mortgage",
+                "Rocket Mortgage",
                 "Canterbury Ranch Assn Dues",
                 "Valencia Reserve Hoa Dues",
                 "Pima Fcu Transfer",
-                "Payment To Karina",
-                "Payment To Ruben Soto",
-                "Payment To D&C Maintenance LLC",
-                "Payment To Carmen",
-                "Payment To Ricardo",
-                "Payment To Noe",
-                "Payment To Francisco Herrera"
+                "ZILLOW",
+                "Payment From Valdez Concrete LLC",
+                "Payment To Iran Valdez",
+                "Payment From Yolanda",
+                "Payment From Carmen",
+                "Payment From Yesenia",
+                "Payment From Noe",
+                "Payment From Jose",
+                "Payment From Allan",
+                "Payment From Iran Valdez", 
+                "Payment From Dba Liliana Ocano", 
             ],
             "Transfers": [
                 "AUTOPAY AUTO-PMT",
@@ -389,22 +477,21 @@ class RuleBasedExpenseCategorizer:
                 "Xoom Debit",
                 "Online Domestic Wire Transfer",
                 "ATM Cash Deposit",
-                "Zelle Payment From Rene",
-                "Zelle Payment From Savannah",
+                "Payment From Rene",
+                "Payment From Joaquin Samaniego",
+                "Payment From Savannah",
+                "Payment From Reyna Maria",
                 "PAGO RECIBIDO DE TESORED POR ORDEN DE MANUEL SALAS",
                 "DIS.EFE.BANAMEX SAB MIRADOR",
-                "DIS.EFE.BANAMEX EL MIRADOR 2"
+                "DIS.EFE.BANAMEX EL MIRADOR 2",
+                "Umb Bank HSA",
+                "Verification Olb Vtrans"
             ],
             "Income": [
                 "Modular Mining S Payroll",
+                "Komatsu America Payroll",
                 "Remote Online Deposit",
-                "Costco Cash Reward",
-                "Payment From Yolanda",
-                "Payment From Carmen",
-                "Payment From Yesenia",
-                "Payment From Noe",
-                "Payment From Jose",
-                "Payment From Allan",
+                "Costco Cash Reward",                              
                 "Tax Ref"
             ],
             "Papas": [
@@ -416,14 +503,12 @@ class RuleBasedExpenseCategorizer:
             for k in keywords:
                 if k in desc:
                     return cat
-        print(f"Could not categorize '{desc}'")
+        RuleBasedExpenseCategorizer._log_uncategorized_expense(row)
         return "Other"
 
     def categorize_expenses(self, df):
-        df["Category"] = df["Description"].apply(self._rule_based_categorization)
+        df["Category"] = df.apply(self._rule_based_categorization, axis=1)
         # print description with amount and category for debugging
         # for index, row in df.iterrows():
-        #     print(
-        #         f"Date: {row['Date']},Description: {row['Description']}, Debit: {row['Debit']}, Credit: {row['Credit']}, Category: {row['Category']}"
-        #     )
+        #     self._print_expense_details(row)
         return df

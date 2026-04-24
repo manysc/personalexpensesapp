@@ -19,83 +19,84 @@ def pipeline():
     # Load and label all data
     # Get the project root directory (2 levels up from this file)
     project_root = Path(__file__).parent.parent.parent
+    statements_year = "2026"
 
-    citi_resources_dir = project_root / "resources" / "citi"
+    citi_resources_dir = project_root/"resources"/"citi"/statements_year
     citi_file_list = [
-        str(citi_resources_dir / f"citi-{month}-2025.pdf")
+        str(citi_resources_dir / f"citi-{month}-{statements_year}.pdf")
         for month in [
             "jan",
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     citi_file_loader = CitiFileLoader()
 
-    wellsfargo_resources_dir = project_root / "resources" / "wellsfargo"
+    wellsfargo_resources_dir = project_root/"resources"/"wellsfargo"/statements_year
     wellsfargo_file_list = [
-        str(wellsfargo_resources_dir / f"wellsfargo-{month}-2025.pdf")
+        str(wellsfargo_resources_dir / f"wellsfargo-{month}-{statements_year}.pdf")
         for month in [
             "jan",
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
 
-    chase_resources_dir = project_root / "resources" / "chase"
+    chase_resources_dir = project_root/"resources"/"chase"/statements_year
     chase_file_list = [
-        str(chase_resources_dir / f"chase-{month}-2025.pdf")
+        str(chase_resources_dir / f"chase-{month}-{statements_year}.pdf")
         for month in [
             "jan",
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     chase_file_loader = ChaseFileLoader()
 
-    banamex_resources_dir = project_root / "resources" / "banamex"
+    banamex_resources_dir = project_root/"resources"/"banamex"/statements_year
     banamex_file_list = [
-        str(banamex_resources_dir / f"banamex-{month}-2025.pdf")
+        str(banamex_resources_dir / f"banamex-{month}-{statements_year}.pdf")
         for month in [
             "jan",
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     banamex_file_loader = BanamexFileLoader()
