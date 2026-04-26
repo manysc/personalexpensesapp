@@ -62,9 +62,15 @@ class ChaseFileLoader:
         credits = []
         debits = []
 
-        # Extract year from filename
+        # Extract year and month from filename
         year_match = re.search(r"-(\w+)-(\d{4})", filename)
         year = year_match.group(2) if year_match else "2025"
+        statement_month = year_match.group(1) if year_match else "jan"
+        month_map = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
+        }
+        statement_month_num = month_map.get(statement_month.lower(), 1)
 
         with pdfplumber.open(filename) as pdf:
             current_section = None
@@ -135,6 +141,11 @@ class ChaseFileLoader:
 
         df = pd.DataFrame(all_transactions)
         df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce")
+        # Adjust year for transactions from the previous year
+        # (e.g., December transactions appearing in a January statement)
+        mask = df["Date"].dt.month > statement_month_num
+        if mask.any():
+            df.loc[mask, "Date"] = df.loc[mask, "Date"].apply(lambda d: d.replace(year=d.year - 1))
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
         df["Bank"] = "chase"
