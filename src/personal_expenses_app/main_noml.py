@@ -12,6 +12,9 @@ from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import (
     WellsfargoFileLoader,
 )
+from personal_expenses_app.infrastructure.expense_db_persistence import (
+    ExpenseDbPersistence,
+)
 from personal_expenses_app.interface.user_interaction import UserInteraction
 
 
@@ -29,14 +32,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            # "may",
-            # "jun",
-            # "jul",
-            # "aug",
-            # "sep",
-            # "oct",
-            # "nov",
-            # "dec"
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec"
         ]
     ]
     citi_file_loader = CitiFileLoader()
@@ -49,14 +52,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            # "may",
-            # "jun",
-            # "jul",
-            # "aug",
-            # "sep",
-            # "oct",
-            # "nov",
-            # "dec"
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec"
         ]
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
@@ -69,14 +72,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            # "may",
-            # "jun",
-            # "jul",
-            # "aug",
-            # "sep",
-            # "oct",
-            # "nov",
-            # "dec"
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec"
         ]
     ]
     chase_file_loader = ChaseFileLoader()
@@ -89,14 +92,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            # "may",
-            # "jun",
-            # "jul",
-            # "aug",
-            # "sep",
-            # "oct",
-            # "nov",
-            # "dec"
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec"
         ]
     ]
     banamex_file_loader = BanamexFileLoader()
@@ -104,6 +107,7 @@ def pipeline():
     categorized_expenses = RuleBasedExpenseCategorizer()
     user_interaction = UserInteraction()
     summarizer = Summarizer()
+    db_persistence = ExpenseDbPersistence()
 
     # Load expenses from file_list
     for index, filename in enumerate(citi_file_list):
@@ -133,6 +137,9 @@ def pipeline():
         
         # Categorize expenses based on rules
         labeled_expenses = categorized_expenses.categorize_expenses(df)
+
+        # Persist to database
+        db_persistence.save_expenses(labeled_expenses)
 
         # Summarize
         month = filename.split("-")[1].capitalize()
