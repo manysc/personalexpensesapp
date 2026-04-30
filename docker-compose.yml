@@ -1,0 +1,23 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # Points to the FastAPI service defined below
+      API_URL: http://backend:8000
+    depends_on:
+      - backend
+
+  backend:
+    # Replace with your actual FastAPI image or build context if containerised
+    # Example using the same Python venv image:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
