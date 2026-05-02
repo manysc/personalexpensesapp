@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -6,13 +7,19 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, field_validator
-from sqlalchemy import Column, Integer, Numeric, String, UniqueConstraint, create_engine, select
+from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
 
-app = FastAPI(title="Personal Expenses API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _run_migrations(_get_engine())
+    yield
+
+
+app = FastAPI(title="Personal Expenses API", version="1.0.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +46,8 @@ class _AllExpense(_Base):
     debit = Column(Numeric(12, 2), nullable=True)
     credit = Column(Numeric(12, 2), nullable=True)
     category = Column(String(100), nullable=True)
+    overridden = Column(Boolean, nullable=False, default=False, server_default="false")
+    comments = Column(String(2000), nullable=True)
 
 
 def _get_engine():
@@ -46,6 +55,38 @@ def _get_engine():
     if not connection_string:
         raise RuntimeError("DATABASE_URL environment variable is not set.")
     return create_engine(connection_string)
+
+
+def _run_migrations(engine) -> None:
+    """Apply incremental schema migrations."""
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'overridden' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN overridden BOOLEAN NOT NULL DEFAULT FALSE; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'comments' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN comments VARCHAR(2000); "
+                "  END IF; "
+                "END $$;"
+            )
+        )
+        conn.commit()
 
 
 def get_session():
@@ -66,6 +107,8 @@ class ExpenseResponse(BaseModel):
     debit: Optional[Decimal] = None
     credit: Optional[Decimal] = None
     category: Optional[str] = None
+    overridden: bool = False
+    comments: Optional[str] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -75,6 +118,14 @@ class ExpenseResponse(BaseModel):
         return v
 
     model_config = {"from_attributes": True}
+
+
+class CategoryOverrideRequest(BaseModel):
+    category: str
+
+
+class CommentsUpdateRequest(BaseModel):
+    comments: str
 
 
 class ExpenseListResponse(BaseModel):
@@ -121,7 +172,7 @@ def list_expenses(
     ).scalars().all()
 
     return ExpenseListResponse(
-        total=total,
+        total=total or 0,
         limit=limit,
         offset=offset,
         items=[ExpenseResponse.model_validate(r) for r in rows],
@@ -134,5 +185,38 @@ def get_expense(expense_id: int, session: Session = Depends(get_session)):
     row = session.get(_AllExpense, expense_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    return ExpenseResponse.model_validate(row)
+
+
+@app.patch("/expenses/{expense_id}/category", response_model=ExpenseResponse)
+def override_category(
+    expense_id: int,
+    body: CategoryOverrideRequest,
+    session: Session = Depends(get_session),
+):
+    """Override the category of an expense and mark it as manually overridden."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    row.category = body.category
+    row.overridden = True
+    session.commit()
+    session.refresh(row)
+    return ExpenseResponse.model_validate(row)
+
+
+@app.patch("/expenses/{expense_id}/comments", response_model=ExpenseResponse)
+def update_comments(
+    expense_id: int,
+    body: CommentsUpdateRequest,
+    session: Session = Depends(get_session),
+):
+    """Update the free-text comments of an expense."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    row.comments = body.comments
+    session.commit()
+    session.refresh(row)
     return ExpenseResponse.model_validate(row)
 

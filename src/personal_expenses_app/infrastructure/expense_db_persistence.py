@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import Column, Integer, Numeric, String, UniqueConstraint, create_engine, text
+from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import DeclarativeBase, Session
 
@@ -31,6 +31,8 @@ class _AllExpense(_Base):
     debit = Column(Numeric(12, 2), nullable=True)
     credit = Column(Numeric(12, 2), nullable=True)
     category = Column(String(100), nullable=True)
+    overridden = Column(Boolean, nullable=False, default=False, server_default="false")
+    comments = Column(String(2000), nullable=True)
 
 
 class ExpenseDbPersistence:
@@ -99,6 +101,20 @@ class ExpenseDbPersistence:
                     "END $$;"
                 )
             )
+            # Add overridden column if it doesn't exist yet.
+            conn.execute(
+                text(
+                    "DO $$ BEGIN "
+                    "  IF NOT EXISTS ( "
+                    "    SELECT 1 FROM information_schema.columns "
+                    "    WHERE table_name = 'all_expenses' AND column_name = 'overridden' "
+                    "  ) THEN "
+                    "    ALTER TABLE all_expenses "
+                    "    ADD COLUMN overridden BOOLEAN NOT NULL DEFAULT FALSE; "
+                    "  END IF; "
+                    "END $$;"
+                )
+            )
             conn.commit()
 
     def save_expenses(self, labeled_expenses: pd.DataFrame) -> None:
@@ -121,7 +137,13 @@ class ExpenseDbPersistence:
         stmt = pg_insert(_AllExpense)
         upsert_stmt = stmt.on_conflict_do_update(
             constraint="uix_expense_natural_key",
-            set_={"category": stmt.excluded.category},
+            set_={
+                "category": text(
+                    "CASE WHEN all_expenses.overridden = TRUE "
+                    "THEN all_expenses.category "
+                    "ELSE EXCLUDED.category END"
+                ),
+            },
         )
         with Session(self._engine) as session:
             session.execute(upsert_stmt, records)

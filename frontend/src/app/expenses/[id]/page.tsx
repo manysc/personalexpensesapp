@@ -1,3 +1,5 @@
+import CategoryEditor from "@/components/CategoryEditor";
+import CommentsEditor from "@/components/CommentsEditor";
 import type { Expense } from "@/types/expense";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -27,13 +29,12 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
   const { id } = await params;
   const expense = await getExpense(id);
 
-  const fields = [
+  const staticFields = [
     { label: "Date", value: expense.date },
     { label: "Bank", value: expense.bank },
     { label: "Description", value: expense.description },
     { label: "Debit", value: formatAmount(expense.debit) },
     { label: "Credit", value: formatAmount(expense.credit) },
-    { label: "Category", value: expense.category ?? "—" },
   ];
 
   return (
@@ -56,7 +57,7 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
         </div>
 
         <dl className="divide-y divide-gray-100">
-          {fields.map(({ label, value }) => (
+          {staticFields.map(({ label, value }) => (
             <div key={label} className="px-6 py-4 grid grid-cols-3 gap-4">
               <dt className="text-sm font-medium text-gray-500">{label}</dt>
               <dd className="text-sm text-gray-900 col-span-2 break-words">
@@ -64,8 +65,21 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
               </dd>
             </div>
           ))}
+          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+            <dt className="text-sm font-medium text-gray-500">Category</dt>
+            <dd className="col-span-2">
+              <CategoryEditor expense={expense} />
+            </dd>
+          </div>
+          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-start">
+            <dt className="text-sm font-medium text-gray-500">Comments</dt>
+            <dd className="col-span-2">
+              <CommentsEditor expense={expense} />
+            </dd>
+          </div>
         </dl>
       </div>
     </div>
   );
 }
+

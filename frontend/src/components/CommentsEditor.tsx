@@ -1,0 +1,95 @@
+"use client";
+
+import type { Expense } from "@/types/expense";
+import { useState } from "react";
+
+interface Props {
+  expense: Expense;
+}
+
+export default function CommentsEditor({ expense }: Props) {
+  const [comments, setComments] = useState(expense.comments ?? "");
+  const [editing, setEditing] = useState(false);
+  const [input, setInput] = useState(expense.comments ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/expenses/${expense.id}/comments`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comments: input }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+      const updated: Expense = await res.json();
+      setComments(updated.comments ?? "");
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleCancel() {
+    setInput(comments);
+    setError(null);
+    setEditing(false);
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") handleCancel();
+            }}
+            rows={3}
+            className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            placeholder="Add a comment…"
+            autoFocus
+            disabled={saving}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={saving}
+              className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2">
+          <span className="text-sm text-gray-900 whitespace-pre-wrap">
+            {comments || "—"}
+          </span>
+          <button
+            onClick={() => {
+              setInput(comments);
+              setEditing(true);
+            }}
+            className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+          >
+            Edit
+          </button>
+        </div>
+      )}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
