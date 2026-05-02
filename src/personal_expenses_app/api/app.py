@@ -1,3 +1,4 @@
+import math
 import os
 from contextlib import asynccontextmanager
 from decimal import Decimal
@@ -6,6 +7,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -177,6 +179,61 @@ def list_expenses(
         offset=offset,
         items=[ExpenseResponse.model_validate(r) for r in rows],
     )
+
+
+class SummaryItem(BaseModel):
+    month: str
+    category: str
+    total: float
+
+
+@app.get("/expenses/summary")
+def expenses_summary(
+    date_from: Optional[str] = Query(default=None, description="Include expenses on or after this date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
+    session: Session = Depends(get_session),
+):
+    """Return total net expenses (debit - credit) grouped by month (YYYY-MM) and category."""
+    conditions = ["category IS NOT NULL"]
+    params: dict = {}
+
+    if date_from is not None:
+        conditions.append("date >= :date_from")
+        params["date_from"] = date_from
+    if date_to is not None:
+        conditions.append("date <= :date_to")
+        params["date_to"] = date_to
+
+    where_clause = " AND ".join(conditions)
+    sql = text(f"""
+        SELECT
+            substring(date, 1, 7) AS month,
+            category,
+            SUM(CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END)::float  AS debit_total,
+            SUM(CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END)::float AS credit_total
+        FROM all_expenses
+        WHERE {where_clause}
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+    """)
+
+    rows = session.execute(sql, params).fetchall()
+
+    def safe_float(v) -> float:
+        if v is None:
+            return 0.0
+        f = float(v)
+        return f if math.isfinite(f) else 0.0
+
+    result = [
+        {
+            "month": r[0],
+            "category": r[1],
+            "total": safe_float(r[2]) - safe_float(r[3]),
+        }
+        for r in rows
+    ]
+    return JSONResponse(content=result)
 
 
 @app.get("/expenses/{expense_id}", response_model=ExpenseResponse)

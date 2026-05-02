@@ -32,14 +32,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     citi_file_loader = CitiFileLoader()
@@ -52,14 +52,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
@@ -72,14 +72,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     chase_file_loader = ChaseFileLoader()
@@ -92,14 +92,14 @@ def pipeline():
             "feb",
             "mar",
             "apr",
-            "may",
-            "jun",
-            "jul",
-            "aug",
-            "sep",
-            "oct",
-            "nov",
-            "dec"
+            # "may",
+            # "jun",
+            # "jul",
+            # "aug",
+            # "sep",
+            # "oct",
+            # "nov",
+            # "dec"
         ]
     ]
     banamex_file_loader = BanamexFileLoader()
@@ -108,6 +108,8 @@ def pipeline():
     user_interaction = UserInteraction()
     summarizer = Summarizer()
     db_persistence = ExpenseDbPersistence()
+
+    all_labeled_expenses = []
 
     # Load expenses from file_list
     for index, filename in enumerate(citi_file_list):
@@ -134,21 +136,28 @@ def pipeline():
         if df is None or df.empty:
             print(f"No data loaded for file: {filename}")
             continue
-        
+
         # Categorize expenses based on rules
         labeled_expenses = categorized_expenses.categorize_expenses(df)
 
         # Persist to database
         db_persistence.save_expenses(labeled_expenses)
 
-        # Summarize
-        month = filename.split("-")[1].capitalize()
-        year = filename.split("-")[2].split(".")[0]
-        summary = summarizer.summarize_by_category(labeled_expenses)
-        summary["Month"] = month
-        summary["Year"] = year
-        user_interaction.print_summary(summary)
-        user_interaction.print_total(summary)
+        all_labeled_expenses.append(labeled_expenses)
+
+    # Summarize all expenses grouped by their actual transaction month and year,
+    # so transactions from previous statement periods appear in the correct month.
+    if all_labeled_expenses:
+        combined = pd.concat(all_labeled_expenses, ignore_index=True)
+        combined = combined.drop_duplicates()
+        for (year_val, month_val), group in combined.groupby(
+            [combined["Date"].dt.year, combined["Date"].dt.month]
+        ):
+            summary = summarizer.summarize_by_category(group)
+            summary["Month"] = pd.Timestamp(year=year_val, month=month_val, day=1).strftime("%b")
+            summary["Year"] = str(year_val)
+            user_interaction.print_summary(summary)
+            user_interaction.print_total(summary)
 
 
 if __name__ == "__main__":
