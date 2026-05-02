@@ -6,6 +6,8 @@ export interface Expense {
   debit: number | null;
   credit: number | null;
   category: string | null;
+  overridden: boolean;
+  comments: string | null;
 }
 
 export interface ExpenseListResponse {

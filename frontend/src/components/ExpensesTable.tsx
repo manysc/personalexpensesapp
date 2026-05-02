@@ -44,6 +44,7 @@ export default function ExpensesTable({ items, loading = false }: Props) {
                 { label: "Debit", align: "right" },
                 { label: "Credit", align: "right" },
                 { label: "Category", align: "left" },
+                { label: "Comments", align: "left" },
               ].map(({ label, align }) => (
                 <th
                   key={label}
@@ -81,9 +82,25 @@ export default function ExpensesTable({ items, loading = false }: Props) {
                   {fmt(expense.credit)}
                 </td>
                 <td className="px-4 py-3">
-                  {expense.category ? (
-                    <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                      {expense.category}
+                  <div className="flex items-center gap-1.5">
+                    {expense.category ? (
+                      <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                        {expense.category}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                    {expense.overridden && (
+                      <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                        overridden
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="max-w-[180px] px-4 py-3 text-gray-600">
+                  {expense.comments ? (
+                    <span className="block truncate text-xs" title={expense.comments}>
+                      {expense.comments}
                     </span>
                   ) : (
                     <span className="text-gray-400">—</span>
