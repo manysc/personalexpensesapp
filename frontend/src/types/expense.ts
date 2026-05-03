@@ -23,3 +23,20 @@ export interface ExpenseFilters {
   date_from: string;
   date_to: string;
 }
+
+export interface RentalProperty {
+  id: number;
+  alias: string;
+  address: string;
+  tenant: string | null;
+  lease_renewal_date: string | null;
+  payment_day: number | null;
+}
+
+export interface RentalPropertyRequest {
+  alias: string;
+  address: string;
+  tenant: string | null;
+  lease_renewal_date: string | null;
+  payment_day: number | null;
+}
