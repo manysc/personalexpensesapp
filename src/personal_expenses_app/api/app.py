@@ -62,6 +62,7 @@ class _AllExpense(_Base):
     category = Column(String(100), nullable=True)
     overridden = Column(Boolean, nullable=False, default=False, server_default="false")
     comments = Column(String(2000), nullable=True)
+    property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
 
 
 def _get_engine():
@@ -142,6 +143,19 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'property_id' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN property_id INTEGER REFERENCES rental_properties(id) ON DELETE SET NULL; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.commit()
 
 
@@ -165,6 +179,7 @@ class ExpenseResponse(BaseModel):
     category: Optional[str] = None
     overridden: bool = False
     comments: Optional[str] = None
+    property_id: Optional[int] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -327,6 +342,30 @@ def update_comments(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
     row.comments = body.comments
+    session.commit()
+    session.refresh(row)
+    return ExpenseResponse.model_validate(row)
+
+
+class PropertyAssignRequest(BaseModel):
+    property_id: Optional[int] = None
+
+
+@app.patch("/expenses/{expense_id}/property", response_model=ExpenseResponse)
+def assign_property(
+    expense_id: int,
+    body: PropertyAssignRequest,
+    session: Session = Depends(get_session),
+):
+    """Assign or unassign a rental property for an expense."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    if body.property_id is not None:
+        prop = session.get(_RentalProperty, body.property_id)
+        if prop is None:
+            raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
+    row.property_id = body.property_id
     session.commit()
     session.refresh(row)
     return ExpenseResponse.model_validate(row)

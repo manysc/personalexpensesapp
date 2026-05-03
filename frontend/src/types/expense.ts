@@ -8,6 +8,7 @@ export interface Expense {
   category: string | null;
   overridden: boolean;
   comments: string | null;
+  property_id: number | null;
 }
 
 export interface ExpenseListResponse {

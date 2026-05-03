@@ -3,7 +3,7 @@
 import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
-import type { ExpenseFilters, ExpenseListResponse } from "@/types/expense";
+import type { ExpenseFilters, ExpenseListResponse, RentalProperty } from "@/types/expense";
 import { useCallback, useEffect, useState } from "react";
 
 const PAGE_SIZE = 25;
@@ -21,6 +21,18 @@ export default function ExpensesPage() {
   const [data, setData] = useState<ExpenseListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [propertyMap, setPropertyMap] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    fetch("/api/rental-properties")
+      .then((r) => r.json() as Promise<RentalProperty[]>)
+      .then((props) => {
+        const map: Record<number, string> = {};
+        for (const p of props) map[p.id] = p.alias;
+        setPropertyMap(map);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +100,7 @@ export default function ExpensesPage() {
               ? "No expenses found"
               : `Showing ${data.offset + 1}–${data.offset + data.items.length} of ${data.total} expenses`}
           </p>
-          <ExpensesTable items={data.items} loading={loading} />
+          <ExpensesTable items={data.items} loading={loading} propertyMap={propertyMap} />
           {totalPages > 1 && (
             <Pagination
               page={page}
