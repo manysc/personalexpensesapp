@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
+from sqlalchemy.exc import IntegrityError
 
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
@@ -30,6 +31,17 @@ app = FastAPI(title="Personal Expenses API", version="1.0.0", lifespan=lifespan)
 
 class _Base(DeclarativeBase):
     pass
+
+
+class _RentalProperty(_Base):
+    __tablename__ = "rental_properties"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alias = Column(String(100), nullable=False, unique=True)
+    address = Column(String(500), nullable=False)
+    tenant = Column(String(200), nullable=True)
+    lease_renewal_date = Column(String(10), nullable=True)  # YYYY-MM-DD
+    payment_day = Column(Integer, nullable=True)  # Day of month 1-31
 
 
 class _AllExpense(_Base):
@@ -62,6 +74,48 @@ def _get_engine():
 def _run_migrations(engine) -> None:
     """Apply incremental schema migrations."""
     with engine.connect() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS rental_properties ("
+                "  id SERIAL PRIMARY KEY, "
+                "  alias VARCHAR(100) NOT NULL UNIQUE, "
+                "  address VARCHAR(500) NOT NULL, "
+                "  tenant VARCHAR(200), "
+                "  lease_renewal_date VARCHAR(10), "
+                "  payment_day INTEGER "
+                ");"
+            )
+        )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'rental_properties' AND column_name = 'lease_renewal_date' "
+                "  ) THEN "
+                "    ALTER TABLE rental_properties ADD COLUMN lease_renewal_date VARCHAR(10); "
+                "  END IF; "
+                "END $$;"
+            )
+        )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'rental_properties' AND column_name = 'payment_date' "
+                "  ) THEN "
+                "    ALTER TABLE rental_properties DROP COLUMN payment_date; "
+                "  END IF; "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'rental_properties' AND column_name = 'payment_day' "
+                "  ) THEN "
+                "    ALTER TABLE rental_properties ADD COLUMN payment_day INTEGER; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.execute(
             text(
                 "DO $$ BEGIN "
@@ -288,4 +342,96 @@ def list_categories(session: Session = Depends(get_session)):
         .order_by(_AllExpense.category)
     ).scalars().all()
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Rental properties models and routes
+# ---------------------------------------------------------------------------
+
+class RentalPropertyResponse(BaseModel):
+    id: int
+    alias: str
+    address: str
+    tenant: Optional[str] = None
+    lease_renewal_date: Optional[str] = None
+    payment_day: Optional[int] = None
+
+    model_config = {"from_attributes": True}
+
+
+class RentalPropertyRequest(BaseModel):
+    alias: str
+    address: str
+    tenant: Optional[str] = None
+    lease_renewal_date: Optional[str] = None
+    payment_day: Optional[int] = None
+
+
+@app.get("/rental-properties", response_model=list[RentalPropertyResponse])
+def list_rental_properties(session: Session = Depends(get_session)):
+    """Return all rental properties sorted by alias."""
+    rows = session.execute(
+        select(_RentalProperty).order_by(_RentalProperty.alias)
+    ).scalars().all()
+    return [RentalPropertyResponse.model_validate(r) for r in rows]
+
+
+@app.post("/rental-properties", response_model=RentalPropertyResponse, status_code=201)
+def create_rental_property(
+    body: RentalPropertyRequest,
+    session: Session = Depends(get_session),
+):
+    """Create a new rental property."""
+    row = _RentalProperty(
+        alias=body.alias,
+        address=body.address,
+        tenant=body.tenant,
+        lease_renewal_date=body.lease_renewal_date,
+        payment_day=body.payment_day,
+    )
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"A property with alias '{body.alias}' already exists.")
+    session.refresh(row)
+    return RentalPropertyResponse.model_validate(row)
+
+
+@app.put("/rental-properties/{property_id}", response_model=RentalPropertyResponse)
+def update_rental_property(
+    property_id: int,
+    body: RentalPropertyRequest,
+    session: Session = Depends(get_session),
+):
+    """Update an existing rental property."""
+    row = session.get(_RentalProperty, property_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
+    row.alias = body.alias
+    row.address = body.address
+    row.tenant = body.tenant
+    row.lease_renewal_date = body.lease_renewal_date
+    row.payment_day = body.payment_day
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"A property with alias '{body.alias}' already exists.")
+    session.refresh(row)
+    return RentalPropertyResponse.model_validate(row)
+
+
+@app.delete("/rental-properties/{property_id}", status_code=204)
+def delete_rental_property(
+    property_id: int,
+    session: Session = Depends(get_session),
+):
+    """Delete a rental property."""
+    row = session.get(_RentalProperty, property_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
+    session.delete(row)
+    session.commit()
 
