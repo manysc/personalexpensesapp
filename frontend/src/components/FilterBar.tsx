@@ -1,7 +1,7 @@
 "use client";
 
 import type { ExpenseFilters } from "@/types/expense";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
   onApply: (filters: ExpenseFilters) => void;
@@ -19,10 +19,18 @@ const inputClass =
 
 export default function FilterBar({ onApply }: Props) {
   const [draft, setDraft] = useState<ExpenseFilters>(EMPTY);
+  const [categories, setCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/categories")
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setCategories)
+      .catch(() => setCategories([]));
+  }, []);
 
   const set =
     (field: keyof ExpenseFilters) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setDraft((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -58,13 +66,18 @@ export default function FilterBar({ onApply }: Props) {
           <label className="mb-1 block text-xs font-medium text-gray-600">
             Category
           </label>
-          <input
-            type="text"
+          <select
             value={draft.category}
             onChange={set("category")}
-            placeholder="e.g. groceries"
             className={inputClass}
-          />
+          >
+            <option value="">All categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>
