@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import {
-    Bar,
-    BarChart,
-    CartesianGrid,
-    Legend,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 interface SummaryItem {
@@ -59,6 +59,10 @@ export default function ChartsPage() {
   const [dateTo, setDateTo] = useState("");
   const [appliedFrom, setAppliedFrom] = useState("");
   const [appliedTo, setAppliedTo] = useState("");
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+
+  // All categories available from the full data set
+  const allCategories = Array.from(new Set(data.map((d) => d.category))).sort();
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +81,7 @@ export default function ChartsPage() {
       .then((json) => {
         if (!cancelled) {
           setData(json);
+          setSelectedCategories([]);
           setLoading(false);
         }
       })
@@ -90,7 +95,18 @@ export default function ChartsPage() {
     return () => { cancelled = true; };
   }, [appliedFrom, appliedTo]);
 
-  const { rows, categories } = pivot(data);
+  const filteredData =
+    selectedCategories.length === 0
+      ? data
+      : data.filter((d) => selectedCategories.includes(d.category));
+
+  const { rows, categories } = pivot(filteredData);
+
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
 
   const handleApply = () => {
     setAppliedFrom(dateFrom);
@@ -102,6 +118,7 @@ export default function ChartsPage() {
     setDateTo("");
     setAppliedFrom("");
     setAppliedTo("");
+    setSelectedCategories([]);
   };
 
   return (
@@ -142,6 +159,47 @@ export default function ChartsPage() {
         </button>
       </div>
 
+      {/* Category filter */}
+      {allCategories.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-600">
+              Filter categories
+              {selectedCategories.length > 0 && (
+                <span className="ml-2 text-blue-600">({selectedCategories.length} selected)</span>
+              )}
+            </span>
+            {selectedCategories.length > 0 && (
+              <button
+                onClick={() => setSelectedCategories([])}
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {allCategories.map((cat, i) => {
+              const active = selectedCategories.length === 0 || selectedCategories.includes(cat);
+              return (
+                <button
+                  key={cat}
+                  onClick={() => toggleCategory(cat)}
+                  className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                  style={{
+                    borderColor: PALETTE[i % PALETTE.length],
+                    backgroundColor: active ? PALETTE[i % PALETTE.length] : "transparent",
+                    color: active ? "#fff" : PALETTE[i % PALETTE.length],
+                  }}
+                >
+                  {cat}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
           {error}
@@ -177,14 +235,17 @@ export default function ChartsPage() {
                 ]}
               />
               <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: 16 }} />
-              {categories.map((cat, i) => (
-                <Bar
-                  key={cat}
-                  dataKey={cat}
-                  stackId="a"
-                  fill={PALETTE[i % PALETTE.length]}
-                />
-              ))}
+              {categories.map((cat) => {
+                const i = allCategories.indexOf(cat);
+                return (
+                  <Bar
+                    key={cat}
+                    dataKey={cat}
+                    stackId="a"
+                    fill={PALETTE[i % PALETTE.length]}
+                  />
+                );
+              })}
             </BarChart>
           </ResponsiveContainer>
         </div>

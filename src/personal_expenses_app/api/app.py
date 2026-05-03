@@ -277,3 +277,15 @@ def update_comments(
     session.refresh(row)
     return ExpenseResponse.model_validate(row)
 
+
+@app.get("/categories", response_model=list[str])
+def list_categories(session: Session = Depends(get_session)):
+    """Return all distinct non-null categories sorted alphabetically."""
+    rows = session.execute(
+        select(_AllExpense.category)
+        .where(_AllExpense.category.isnot(None))
+        .distinct()
+        .order_by(_AllExpense.category)
+    ).scalars().all()
+    return rows
+
