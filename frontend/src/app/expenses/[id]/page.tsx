@@ -1,5 +1,6 @@
 import CategoryEditor from "@/components/CategoryEditor";
 import CommentsEditor from "@/components/CommentsEditor";
+import RentalPropertyEditor from "@/components/RentalPropertyEditor";
 import type { Expense } from "@/types/expense";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -69,6 +70,12 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
             <dt className="text-sm font-medium text-gray-500">Category</dt>
             <dd className="col-span-2">
               <CategoryEditor expense={expense} />
+            </dd>
+          </div>
+          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+            <dt className="text-sm font-medium text-gray-500">Rental Property</dt>
+            <dd className="col-span-2">
+              <RentalPropertyEditor expense={expense} />
             </dd>
           </div>
           <div className="px-6 py-4 grid grid-cols-3 gap-4 items-start">
