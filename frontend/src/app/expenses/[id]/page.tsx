@@ -1,8 +1,6 @@
-import CategoryEditor from "@/components/CategoryEditor";
-import CommentsEditor from "@/components/CommentsEditor";
-import RentalPropertyEditor from "@/components/RentalPropertyEditor";
+import BackButton from "@/components/BackButton";
+import ExpenseDetailCard from "@/components/ExpenseDetailCard";
 import type { Expense } from "@/types/expense";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 async function getExpense(id: string): Promise<Expense> {
@@ -41,51 +39,9 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
   return (
     <div className="max-w-2xl">
       <div className="mb-6">
-        <Link
-          href="/"
-          className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800 hover:underline"
-        >
-          ← Back to expenses
-        </Link>
+        <BackButton />
       </div>
-
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-200">
-          <h1 className="text-xl font-semibold text-gray-900">
-            Expense Details
-          </h1>
-          <p className="mt-1 text-sm text-gray-500">ID #{expense.id}</p>
-        </div>
-
-        <dl className="divide-y divide-gray-100">
-          {staticFields.map(({ label, value }) => (
-            <div key={label} className="px-6 py-4 grid grid-cols-3 gap-4">
-              <dt className="text-sm font-medium text-gray-500">{label}</dt>
-              <dd className="text-sm text-gray-900 col-span-2 break-words">
-                {value}
-              </dd>
-            </div>
-          ))}
-          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
-            <dt className="text-sm font-medium text-gray-500">Category</dt>
-            <dd className="col-span-2">
-              <CategoryEditor expense={expense} />
-            </dd>
-          </div>
-          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
-            <dt className="text-sm font-medium text-gray-500">Rental Property</dt>
-            <dd className="col-span-2">
-              <RentalPropertyEditor expense={expense} />
-            </dd>
-          </div>
-          <div className="px-6 py-4 grid grid-cols-3 gap-4 items-start">
-            <dt className="text-sm font-medium text-gray-500">Comments</dt>
-            <dd className="col-span-2">
-              <CommentsEditor expense={expense} />
-            </dd>
-          </div>
-        </dl>
-      </div>
+      <ExpenseDetailCard expense={expense} staticFields={staticFields} />
     </div>
   );
 }

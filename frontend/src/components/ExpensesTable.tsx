@@ -47,6 +47,7 @@ export default function ExpensesTable({ items, loading = false, propertyMap = {}
                 { label: "Category", align: "left" },
                 { label: "Property", align: "left" },
                 { label: "Comments", align: "left" },
+                { label: "Edited", align: "left" },
               ].map(({ label, align }) => (
                 <th
                   key={label}
@@ -64,7 +65,11 @@ export default function ExpensesTable({ items, loading = false, propertyMap = {}
                 onClick={() => router.push(`/expenses/${expense.id}`)}
                 className="cursor-pointer transition-colors hover:bg-blue-50"
               >
-                <td className="whitespace-nowrap px-4 py-3 text-gray-600">
+                <td className={`whitespace-nowrap py-3 text-gray-600 ${
+                  expense.overridden
+                    ? "border-l-4 border-l-amber-400 pl-3 pr-4"
+                    : "px-4"
+                }`}>
                   {expense.date}
                 </td>
                 <td className="px-4 py-3">
@@ -84,20 +89,13 @@ export default function ExpensesTable({ items, loading = false, propertyMap = {}
                   {fmt(expense.credit)}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    {expense.category ? (
-                      <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                        {expense.category}
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">—</span>
-                    )}
-                    {expense.overridden && (
-                      <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                        overridden
-                      </span>
-                    )}
-                  </div>
+                  {expense.category ? (
+                    <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                      {expense.category}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {expense.property_id != null && propertyMap[expense.property_id] ? (
@@ -115,6 +113,18 @@ export default function ExpensesTable({ items, loading = false, propertyMap = {}
                     </span>
                   ) : (
                     <span className="text-gray-400">—</span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">
+                  {expense.overridden ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3" aria-hidden="true">
+                        <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L4.75 8.774a2.75 2.75 0 0 0-.596.892l-.79 2.232a.75.75 0 0 0 .95.95l2.233-.79a2.75 2.75 0 0 0 .89-.596l6.262-6.262a1.75 1.75 0 0 0 0-2.475Z" />
+                      </svg>
+                      Edited
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">—</span>
                   )}
                 </td>
               </tr>

@@ -5,10 +5,12 @@ import { useState } from "react";
 
 interface Props {
   expense: Expense;
+  onSaved?: (updated: Expense) => void;
 }
 
 export default function CommentsEditor({ expense }: Props) {
   const [comments, setComments] = useState(expense.comments ?? "");
+
   const [editing, setEditing] = useState(false);
   const [input, setInput] = useState(expense.comments ?? "");
   const [saving, setSaving] = useState(false);
@@ -18,7 +20,7 @@ export default function CommentsEditor({ expense }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/expenses/${expense.id}/comments`, {
+      const res = await fetch(`/api/expenses/${expense.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comments: input }),
@@ -26,6 +28,7 @@ export default function CommentsEditor({ expense }: Props) {
       if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
       const updated: Expense = await res.json();
       setComments(updated.comments ?? "");
+      onSaved?.(updated);
       setEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
