@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 interface Props {
   onApply: (filters: ExpenseFilters) => void;
+  initialValues?: ExpenseFilters;
 }
 
 const EMPTY: ExpenseFilters = {
@@ -17,8 +18,8 @@ const EMPTY: ExpenseFilters = {
 const inputClass =
   "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
-export default function FilterBar({ onApply }: Props) {
-  const [draft, setDraft] = useState<ExpenseFilters>(EMPTY);
+export default function FilterBar({ onApply, initialValues }: Props) {
+  const [draft, setDraft] = useState<ExpenseFilters>(initialValues ?? EMPTY);
   const [categories, setCategories] = useState<string[]>([]);
 
   useEffect(() => {

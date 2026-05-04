@@ -4,6 +4,7 @@ import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
 import type { ExpenseFilters, ExpenseListResponse, RentalProperty } from "@/types/expense";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 const PAGE_SIZE = 25;
@@ -15,9 +16,20 @@ const EMPTY_FILTERS: ExpenseFilters = {
 };
 
 export default function ExpensesPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const filtersFromUrl: ExpenseFilters = {
+    bank: searchParams.get("bank") ?? "",
+    category: searchParams.get("category") ?? "",
+    date_from: searchParams.get("date_from") ?? "",
+    date_to: searchParams.get("date_to") ?? "",
+  };
+  const pageFromUrl = parseInt(searchParams.get("page") ?? "0", 10);
+
   const [appliedFilters, setAppliedFilters] =
-    useState<ExpenseFilters>(EMPTY_FILTERS);
-  const [page, setPage] = useState(0);
+    useState<ExpenseFilters>(filtersFromUrl);
+  const [page, setPage] = useState(pageFromUrl);
   const [data, setData] = useState<ExpenseListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,16 +84,42 @@ export default function ExpensesPage() {
     };
   }, [appliedFilters, page]);
 
-  const handleApply = useCallback((filters: ExpenseFilters) => {
-    setAppliedFilters(filters);
-    setPage(0);
-  }, []);
+  const pushUrl = useCallback(
+    (filters: ExpenseFilters, p: number) => {
+      const params = new URLSearchParams();
+      if (filters.bank) params.set("bank", filters.bank);
+      if (filters.category) params.set("category", filters.category);
+      if (filters.date_from) params.set("date_from", filters.date_from);
+      if (filters.date_to) params.set("date_to", filters.date_to);
+      if (p > 0) params.set("page", String(p));
+      const qs = params.toString();
+      router.replace(qs ? `/?${qs}` : "/", { scroll: false });
+    },
+    [router]
+  );
+
+  const handleApply = useCallback(
+    (filters: ExpenseFilters) => {
+      setAppliedFilters(filters);
+      setPage(0);
+      pushUrl(filters, 0);
+    },
+    [pushUrl]
+  );
+
+  const handlePageChange = useCallback(
+    (p: number) => {
+      setPage(p);
+      pushUrl(appliedFilters, p);
+    },
+    [appliedFilters, pushUrl]
+  );
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
 
   return (
     <div className="space-y-4">
-      <FilterBar onApply={handleApply} />
+      <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
@@ -105,7 +143,7 @@ export default function ExpensesPage() {
             <Pagination
               page={page}
               totalPages={totalPages}
-              onPageChange={setPage}
+              onPageChange={handlePageChange}
             />
           )}
         </>

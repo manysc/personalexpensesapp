@@ -195,8 +195,15 @@ class CategoryOverrideRequest(BaseModel):
     category: str
 
 
-class CommentsUpdateRequest(BaseModel):
-    comments: str
+class ExpenseUpdateRequest(BaseModel):
+    """Partial-update request for manual expense fields.
+
+    Only fields present in the JSON body are updated; missing fields are left
+    unchanged.  Any provided field marks the expense as overridden.
+    """
+    category: Optional[str] = None
+    comments: Optional[str] = None
+    property_id: Optional[int] = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -314,6 +321,44 @@ def get_expense(expense_id: int, session: Session = Depends(get_session)):
     return ExpenseResponse.model_validate(row)
 
 
+@app.patch("/expenses/{expense_id}", response_model=ExpenseResponse)
+def update_expense(
+    expense_id: int,
+    body: ExpenseUpdateRequest,
+    session: Session = Depends(get_session),
+):
+    """Partially update an expense's manual fields and mark it as overridden.
+
+    Only fields present in the request body are updated.  Any provided field
+    marks the expense as overridden so that bulk re-imports won't revert the
+    manual changes.
+    """
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+
+    updated = False
+    if "category" in body.model_fields_set:
+        row.category = body.category
+        updated = True
+    if "comments" in body.model_fields_set:
+        row.comments = body.comments
+        updated = True
+    if "property_id" in body.model_fields_set:
+        if body.property_id is not None:
+            prop = session.get(_RentalProperty, body.property_id)
+            if prop is None:
+                raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
+        row.property_id = body.property_id
+        updated = True
+
+    if updated:
+        row.overridden = True
+        session.commit()
+    session.refresh(row)
+    return ExpenseResponse.model_validate(row)
+
+
 @app.patch("/expenses/{expense_id}/category", response_model=ExpenseResponse)
 def override_category(
     expense_id: int,
@@ -326,46 +371,6 @@ def override_category(
         raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
     row.category = body.category
     row.overridden = True
-    session.commit()
-    session.refresh(row)
-    return ExpenseResponse.model_validate(row)
-
-
-@app.patch("/expenses/{expense_id}/comments", response_model=ExpenseResponse)
-def update_comments(
-    expense_id: int,
-    body: CommentsUpdateRequest,
-    session: Session = Depends(get_session),
-):
-    """Update the free-text comments of an expense."""
-    row = session.get(_AllExpense, expense_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
-    row.comments = body.comments
-    session.commit()
-    session.refresh(row)
-    return ExpenseResponse.model_validate(row)
-
-
-class PropertyAssignRequest(BaseModel):
-    property_id: Optional[int] = None
-
-
-@app.patch("/expenses/{expense_id}/property", response_model=ExpenseResponse)
-def assign_property(
-    expense_id: int,
-    body: PropertyAssignRequest,
-    session: Session = Depends(get_session),
-):
-    """Assign or unassign a rental property for an expense."""
-    row = session.get(_AllExpense, expense_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
-    if body.property_id is not None:
-        prop = session.get(_RentalProperty, body.property_id)
-        if prop is None:
-            raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
-    row.property_id = body.property_id
     session.commit()
     session.refresh(row)
     return ExpenseResponse.model_validate(row)

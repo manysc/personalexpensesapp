@@ -8,7 +8,7 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await request.json();
-  const res = await fetch(`${backendUrl()}/expenses/${id}/property`, {
+  const res = await fetch(`${backendUrl()}/expenses/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

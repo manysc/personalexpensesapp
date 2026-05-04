@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 interface Props {
   expense: Expense;
+  onSaved?: (updated: Expense) => void;
 }
 
 const selectClass =
@@ -12,6 +13,7 @@ const selectClass =
 
 export default function RentalPropertyEditor({ expense }: Props) {
   const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
+
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<string>(
     expense.property_id != null ? String(expense.property_id) : ""
@@ -32,7 +34,7 @@ export default function RentalPropertyEditor({ expense }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/expenses/${expense.id}/property`, {
+      const res = await fetch(`/api/expenses/${expense.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ property_id: selected ? Number(selected) : null }),
@@ -40,6 +42,7 @@ export default function RentalPropertyEditor({ expense }: Props) {
       if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
       const updated: Expense = await res.json();
       setPropertyId(updated.property_id);
+      onSaved?.(updated);
       setEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
