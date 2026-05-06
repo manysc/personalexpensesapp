@@ -8,7 +8,7 @@ interface Props {
   onSaved?: (updated: Expense) => void;
 }
 
-export default function CommentsEditor({ expense }: Props) {
+export default function CommentsEditor({ expense, onSaved }: Props) {
   const [comments, setComments] = useState(expense.comments ?? "");
 
   const [editing, setEditing] = useState(false);

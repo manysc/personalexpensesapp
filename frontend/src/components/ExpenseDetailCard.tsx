@@ -1,48 +1,132 @@
 "use client";
 
-import CategoryEditor from "@/components/CategoryEditor";
-import CommentsEditor from "@/components/CommentsEditor";
-import RentalPropertyEditor from "@/components/RentalPropertyEditor";
-import type { Expense } from "@/types/expense";
-import { useState } from "react";
+import type { Expense, RentalProperty } from "@/types/expense";
+import { useEffect, useState } from "react";
 
 interface Props {
   expense: Expense;
   staticFields: { label: string; value: string }[];
 }
 
+const inputClass =
+  "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
+
 export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [overridden, setOverridden] = useState(expense.overridden);
 
-  function handleSaved(updated: Expense) {
-    setOverridden(updated.overridden);
+  // Committed values (shown in view mode)
+  const [category, setCategory] = useState(expense.category ?? "");
+  const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
+  const [comments, setComments] = useState(expense.comments ?? "");
+
+  // Draft values (used while editing)
+  const [draftCategory, setDraftCategory] = useState(category);
+  const [draftPropertyId, setDraftPropertyId] = useState<string>(
+    expense.property_id != null ? String(expense.property_id) : ""
+  );
+  const [draftComments, setDraftComments] = useState(comments);
+
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Options loaded once when entering edit mode
+  const [categories, setCategories] = useState<string[]>([]);
+  const [properties, setProperties] = useState<RentalProperty[]>([]);
+
+  useEffect(() => {
+    if (!editing) return;
+    fetch("/api/categories")
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setCategories)
+      .catch(() => setCategories([]));
+    fetch("/api/rental-properties")
+      .then((r) => r.json() as Promise<RentalProperty[]>)
+      .then(setProperties)
+      .catch(() => setProperties([]));
+  }, [editing]);
+
+  function handleEdit() {
+    setDraftCategory(category);
+    setDraftPropertyId(propertyId != null ? String(propertyId) : "");
+    setDraftComments(comments);
+    setError(null);
+    setEditing(true);
   }
+
+  function handleCancel() {
+    setError(null);
+    setEditing(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        category: draftCategory || null,
+        property_id: draftPropertyId ? Number(draftPropertyId) : null,
+        comments: draftComments || null,
+      };
+      const res = await fetch(`/api/expenses/${expense.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+      const updated: Expense = await res.json();
+      setCategory(updated.category ?? "");
+      setPropertyId(updated.property_id);
+      setComments(updated.comments ?? "");
+      setOverridden(updated.overridden);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const propertyAlias =
+    properties.find((p) => p.id === propertyId)?.alias ?? null;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      {/* Header */}
       <div className="px-6 py-5 border-b border-gray-200">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Expense Details</h1>
             <p className="mt-1 text-sm text-gray-500">ID #{expense.id}</p>
           </div>
-          {overridden && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className="h-3.5 w-3.5"
-                aria-hidden="true"
+          <div className="flex items-center gap-3">
+            {overridden && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                >
+                  <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L4.75 8.774a2.75 2.75 0 0 0-.596.892l-.79 2.232a.75.75 0 0 0 .95.95l2.233-.79a2.75 2.75 0 0 0 .89-.596l6.262-6.262a1.75 1.75 0 0 0 0-2.475Z" />
+                </svg>
+                Manually edited
+              </span>
+            )}
+            {!editing && (
+              <button
+                onClick={handleEdit}
+                className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
               >
-                <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L4.75 8.774a2.75 2.75 0 0 0-.596.892l-.79 2.232a.75.75 0 0 0 .95.95l2.233-.79a2.75 2.75 0 0 0 .89-.596l6.262-6.262a1.75 1.75 0 0 0 0-2.475Z" />
-              </svg>
-              Manually edited
-            </span>
-          )}
+                Edit
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Fields */}
       <dl className="divide-y divide-gray-100">
         {staticFields.map(({ label, value }) => (
           <div key={label} className="px-6 py-4 grid grid-cols-3 gap-4">
@@ -50,25 +134,97 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             <dd className="text-sm text-gray-900 col-span-2 break-words">{value}</dd>
           </div>
         ))}
+
+        {/* Category */}
         <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
           <dt className="text-sm font-medium text-gray-500">Category</dt>
           <dd className="col-span-2">
-            <CategoryEditor expense={expense} onSaved={handleSaved} />
+            {editing ? (
+              <select
+                value={draftCategory}
+                onChange={(e) => setDraftCategory(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              >
+                <option value="">— none —</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-sm text-gray-900">{category || "—"}</span>
+            )}
           </dd>
         </div>
+
+        {/* Rental Property */}
         <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
           <dt className="text-sm font-medium text-gray-500">Rental Property</dt>
           <dd className="col-span-2">
-            <RentalPropertyEditor expense={expense} onSaved={handleSaved} />
+            {editing ? (
+              <select
+                value={draftPropertyId}
+                onChange={(e) => setDraftPropertyId(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              >
+                <option value="">— none —</option>
+                {properties.map((p) => (
+                  <option key={p.id} value={String(p.id)}>{p.alias}</option>
+                ))}
+              </select>
+            ) : propertyId != null ? (
+              <span className="inline-block rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                {propertyAlias ?? `#${propertyId}`}
+              </span>
+            ) : (
+              <span className="text-sm text-gray-400">—</span>
+            )}
           </dd>
         </div>
+
+        {/* Comments */}
         <div className="px-6 py-4 grid grid-cols-3 gap-4 items-start">
           <dt className="text-sm font-medium text-gray-500">Comments</dt>
           <dd className="col-span-2">
-            <CommentsEditor expense={expense} onSaved={handleSaved} />
+            {editing ? (
+              <textarea
+                value={draftComments}
+                onChange={(e) => setDraftComments(e.target.value)}
+                rows={3}
+                className={inputClass}
+                placeholder="Add a comment…"
+                disabled={saving}
+              />
+            ) : (
+              <span className="text-sm text-gray-900 whitespace-pre-wrap">
+                {comments || "—"}
+              </span>
+            )}
           </dd>
         </div>
       </dl>
+
+      {/* Save / Cancel footer */}
+      {editing && (
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          {error && <p className="mr-auto text-sm text-red-600">{error}</p>}
+          <button
+            onClick={handleCancel}
+            disabled={saving}
+            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

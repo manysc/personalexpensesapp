@@ -13,6 +13,10 @@ const EMPTY_FILTERS: ExpenseFilters = {
   category: "",
   date_from: "",
   date_to: "",
+  description: "",
+  comments: "",
+  property_id: "",
+  overridden_only: false,
 };
 
 export default function ExpensesPage() {
@@ -24,6 +28,10 @@ export default function ExpensesPage() {
     category: searchParams.get("category") ?? "",
     date_from: searchParams.get("date_from") ?? "",
     date_to: searchParams.get("date_to") ?? "",
+    description: searchParams.get("description") ?? "",
+    comments: searchParams.get("comments") ?? "",
+    property_id: searchParams.get("property_id") ?? "",
+    overridden_only: searchParams.get("overridden_only") === "true",
   };
   const pageFromUrl = parseInt(searchParams.get("page") ?? "0", 10);
 
@@ -56,6 +64,10 @@ export default function ExpensesPage() {
     if (appliedFilters.category) params.set("category", appliedFilters.category);
     if (appliedFilters.date_from) params.set("date_from", appliedFilters.date_from);
     if (appliedFilters.date_to) params.set("date_to", appliedFilters.date_to);
+    if (appliedFilters.description) params.set("description", appliedFilters.description);
+    if (appliedFilters.comments) params.set("comments", appliedFilters.comments);
+    if (appliedFilters.property_id) params.set("property_id", appliedFilters.property_id);
+    if (appliedFilters.overridden_only) params.set("overridden_only", "true");
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(page * PAGE_SIZE));
 
@@ -91,6 +103,10 @@ export default function ExpensesPage() {
       if (filters.category) params.set("category", filters.category);
       if (filters.date_from) params.set("date_from", filters.date_from);
       if (filters.date_to) params.set("date_to", filters.date_to);
+      if (filters.description) params.set("description", filters.description);
+      if (filters.comments) params.set("comments", filters.comments);
+      if (filters.property_id) params.set("property_id", filters.property_id);
+      if (filters.overridden_only) params.set("overridden_only", "true");
       if (p > 0) params.set("page", String(p));
       const qs = params.toString();
       router.replace(qs ? `/?${qs}` : "/", { scroll: false });
