@@ -70,7 +70,7 @@ export default function ExpensesTable({ items, loading = false, propertyMap = {}
                     ? "border-l-4 border-l-amber-400 pl-3 pr-4"
                     : "px-4"
                 }`}>
-                  {expense.date}
+                  {expense.date.slice(0, 10)}
                 </td>
                 <td className="px-4 py-3">
                   <span className="inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium capitalize text-indigo-700">

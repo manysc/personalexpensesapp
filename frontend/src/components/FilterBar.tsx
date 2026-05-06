@@ -1,6 +1,6 @@
 "use client";
 
-import type { ExpenseFilters } from "@/types/expense";
+import type { ExpenseFilters, RentalProperty } from "@/types/expense";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -13,6 +13,10 @@ const EMPTY: ExpenseFilters = {
   category: "",
   date_from: "",
   date_to: "",
+  description: "",
+  comments: "",
+  property_id: "",
+  overridden_only: false,
 };
 
 const inputClass =
@@ -21,12 +25,17 @@ const inputClass =
 export default function FilterBar({ onApply, initialValues }: Props) {
   const [draft, setDraft] = useState<ExpenseFilters>(initialValues ?? EMPTY);
   const [categories, setCategories] = useState<string[]>([]);
+  const [properties, setProperties] = useState<RentalProperty[]>([]);
 
   useEffect(() => {
     fetch("/api/categories")
       .then((r) => r.json() as Promise<string[]>)
       .then(setCategories)
       .catch(() => setCategories([]));
+    fetch("/api/rental-properties")
+      .then((r) => r.json() as Promise<RentalProperty[]>)
+      .then(setProperties)
+      .catch(() => setProperties([]));
   }, []);
 
   const set =
@@ -50,6 +59,7 @@ export default function FilterBar({ onApply, initialValues }: Props) {
       className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Row 1 */}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">
             Bank
@@ -103,6 +113,66 @@ export default function FilterBar({ onApply, initialValues }: Props) {
             onChange={set("date_to")}
             className={inputClass}
           />
+        </div>
+
+        {/* Row 2 */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Description
+          </label>
+          <input
+            type="text"
+            value={draft.description}
+            onChange={set("description")}
+            placeholder="Search description…"
+            className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Comments
+          </label>
+          <input
+            type="text"
+            value={draft.comments}
+            onChange={set("comments")}
+            placeholder="Search comments…"
+            className={inputClass}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Property
+          </label>
+          <select
+            value={draft.property_id}
+            onChange={set("property_id")}
+            className={inputClass}
+          >
+            <option value="">All properties</option>
+            {properties.map((p) => (
+              <option key={p.id} value={String(p.id)}>
+                {p.alias}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2 pt-5">
+          <input
+            id="overridden_only"
+            type="checkbox"
+            checked={draft.overridden_only}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, overridden_only: e.target.checked }))
+            }
+            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <label htmlFor="overridden_only" className="text-sm text-gray-700">
+            Manually edited only
+          </label>
         </div>
       </div>
 

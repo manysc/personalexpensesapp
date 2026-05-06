@@ -23,6 +23,10 @@ export interface ExpenseFilters {
   category: string;
   date_from: string;
   date_to: string;
+  description: string;
+  comments: string;
+  property_id: string;
+  overridden_only: boolean;
 }
 
 export interface RentalProperty {

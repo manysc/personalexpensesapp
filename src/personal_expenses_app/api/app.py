@@ -223,6 +223,10 @@ def list_expenses(
     category: Optional[str] = Query(default=None, description="Filter by category"),
     date_from: Optional[str] = Query(default=None, description="Include expenses on or after this date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
+    description: Optional[str] = Query(default=None, description="Filter by description substring (case-insensitive)"),
+    comments: Optional[str] = Query(default=None, description="Filter by comments substring (case-insensitive)"),
+    property_id: Optional[int] = Query(default=None, description="Filter by rental property ID"),
+    overridden_only: bool = Query(default=False, description="If true, return only manually overridden expenses"),
     limit: int = Query(default=100, ge=1, le=1000, description="Max number of results to return"),
     offset: int = Query(default=0, ge=0, description="Number of results to skip"),
     session: Session = Depends(get_session),
@@ -238,6 +242,14 @@ def list_expenses(
         stmt = stmt.where(_AllExpense.date >= date_from)
     if date_to is not None:
         stmt = stmt.where(_AllExpense.date <= date_to)
+    if description is not None:
+        stmt = stmt.where(_AllExpense.description.ilike(f"%{description}%"))
+    if comments is not None:
+        stmt = stmt.where(_AllExpense.comments.ilike(f"%{comments}%"))
+    if property_id is not None:
+        stmt = stmt.where(_AllExpense.property_id == property_id)
+    if overridden_only:
+        stmt = stmt.where(_AllExpense.overridden.is_(True))
 
     from sqlalchemy import func
     count_stmt = select(func.count()).select_from(stmt.subquery())

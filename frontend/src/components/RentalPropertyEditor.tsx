@@ -11,7 +11,7 @@ interface Props {
 const selectClass =
   "rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
 
-export default function RentalPropertyEditor({ expense }: Props) {
+export default function RentalPropertyEditor({ expense, onSaved }: Props) {
   const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
 
   const [editing, setEditing] = useState(false);
