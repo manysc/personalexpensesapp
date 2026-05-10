@@ -1,5 +1,6 @@
 "use client";
 
+import AddExpenseModal from "@/components/AddExpenseModal";
 import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
@@ -42,6 +43,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [propertyMap, setPropertyMap] = useState<Record<number, string>>({});
+  const [showAddModal, setShowAddModal] = useState(false);
 
   useEffect(() => {
     fetch("/api/rental-properties")
@@ -135,7 +137,15 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-4">
-      <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
+      <div className="flex items-center justify-between gap-4">
+        <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="shrink-0 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Add expense
+        </button>
+      </div>
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
@@ -164,6 +174,16 @@ export default function ExpensesPage() {
           )}
         </>
       ) : null}
+
+      {showAddModal && (
+        <AddExpenseModal
+          onClose={() => setShowAddModal(false)}
+          onSuccess={(created) => {
+            setShowAddModal(false);
+            router.push(`/expenses/${created.id}`);
+          }}
+        />
+      )}
     </div>
   );
 }

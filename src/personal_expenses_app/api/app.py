@@ -213,9 +213,54 @@ class ExpenseListResponse(BaseModel):
     items: list[ExpenseResponse]
 
 
+class ExpenseCreateRequest(BaseModel):
+    date: str
+    bank: str
+    description: str
+    debit: Optional[Decimal] = None
+    credit: Optional[Decimal] = None
+    category: Optional[str] = None
+    comments: Optional[str] = None
+    property_id: Optional[int] = None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@app.post("/expenses", response_model=ExpenseResponse, status_code=201)
+def create_expense(
+    body: ExpenseCreateRequest,
+    session: Session = Depends(get_session),
+):
+    """Create a new expense manually."""
+    if body.property_id is not None:
+        prop = session.get(_RentalProperty, body.property_id)
+        if prop is None:
+            raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
+    row = _AllExpense(
+        date=body.date,
+        bank=body.bank,
+        description=body.description,
+        debit=body.debit,
+        credit=body.credit,
+        category=body.category,
+        overridden=True,
+        comments=body.comments,
+        property_id=body.property_id,
+    )
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="An expense with this date, bank, description, debit, and credit already exists.",
+        )
+    session.refresh(row)
+    return ExpenseResponse.model_validate(row)
+
 
 @app.get("/expenses", response_model=ExpenseListResponse)
 def list_expenses(
@@ -369,6 +414,16 @@ def update_expense(
         session.commit()
     session.refresh(row)
     return ExpenseResponse.model_validate(row)
+
+
+@app.delete("/expenses/{expense_id}", status_code=204)
+def delete_expense(expense_id: int, session: Session = Depends(get_session)):
+    """Delete an expense by its ID."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    session.delete(row)
+    session.commit()
 
 
 @app.patch("/expenses/{expense_id}/category", response_model=ExpenseResponse)
