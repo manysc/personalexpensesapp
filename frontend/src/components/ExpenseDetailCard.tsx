@@ -71,7 +71,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
     try {
       const res = await fetch(`/api/expenses/${expense.id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 204) throw new Error(`Error ${res.status}: ${res.statusText}`);
-      router.push("/expenses");
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete");
       setDeleting(false);
