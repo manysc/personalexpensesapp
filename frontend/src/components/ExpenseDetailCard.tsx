@@ -1,6 +1,8 @@
 "use client";
 
+import AddExpenseModal from "@/components/AddExpenseModal";
 import type { Expense, RentalProperty } from "@/types/expense";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -12,6 +14,7 @@ const inputClass =
   "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
 
 export default function ExpenseDetailCard({ expense, staticFields }: Props) {
+  const router = useRouter();
   const [overridden, setOverridden] = useState(expense.overridden);
 
   // Committed values (shown in view mode)
@@ -28,6 +31,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Options loaded once when entering edit mode
@@ -57,6 +62,20 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   function handleCancel() {
     setError(null);
     setEditing(false);
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete expense #${expense.id}? This cannot be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/expenses/${expense.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) throw new Error(`Error ${res.status}: ${res.statusText}`);
+      router.push("/expenses");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete");
+      setDeleting(false);
+    }
   }
 
   async function handleSave() {
@@ -114,12 +133,29 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
                 Manually edited
               </span>
             )}
+            <button
+              onClick={() => setShowAddModal(true)}
+              disabled={editing || deleting}
+              className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Add expense
+            </button>
             {!editing && (
               <button
                 onClick={handleEdit}
-                className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                disabled={deleting}
+                className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
               >
                 Edit
+              </button>
+            )}
+            {!editing && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="rounded border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                {deleting ? "Deleting…" : "Delete"}
               </button>
             )}
           </div>
@@ -224,6 +260,22 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
+      )}
+
+      {!editing && error && (
+        <div className="border-t border-gray-200 px-6 py-3">
+          <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {showAddModal && (
+        <AddExpenseModal
+          onClose={() => setShowAddModal(false)}
+          onSuccess={(created) => {
+            setShowAddModal(false);
+            router.push(`/expenses/${created.id}`);
+          }}
+        />
       )}
     </div>
   );
