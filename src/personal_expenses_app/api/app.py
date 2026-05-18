@@ -361,6 +361,44 @@ class SummaryItem(BaseModel):
     total: float
 
 
+class CommentedExpense(BaseModel):
+    id: int
+    date: str
+    description: str
+    category: Optional[str]
+    comments: str
+
+
+@app.get("/expenses/comments", response_model=list[CommentedExpense])
+def expenses_comments(
+    date_from: Optional[str] = Query(default=None, description="Include expenses on or after this date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
+    session: Session = Depends(get_session),
+):
+    """Return all expenses that have a non-empty comment, optionally filtered by date range."""
+    stmt = (
+        select(_AllExpense)
+        .where(_AllExpense.comments.isnot(None))
+        .where(_AllExpense.comments != "")
+    )
+    if date_from is not None:
+        stmt = stmt.where(_AllExpense.date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(_AllExpense.date <= date_to)
+    stmt = stmt.order_by(_AllExpense.date.asc(), _AllExpense.id.asc())
+    rows = session.execute(stmt).scalars().all()
+    return [
+        CommentedExpense(
+            id=r.id,
+            date=r.date,
+            description=r.description,
+            category=r.category,
+            comments=r.comments,
+        )
+        for r in rows
+    ]
+
+
 @app.get("/expenses/summary")
 def expenses_summary(
     date_from: Optional[str] = Query(default=None, description="Include expenses on or after this date (YYYY-MM-DD)"),
