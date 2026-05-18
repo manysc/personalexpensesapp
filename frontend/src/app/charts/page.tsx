@@ -18,6 +18,14 @@ interface SummaryItem {
   total: number;
 }
 
+interface CommentedExpense {
+  id: number;
+  date: string;
+  description: string;
+  category: string | null;
+  comments: string;
+}
+
 interface ChartRow {
   month: string;
   [category: string]: number | string;
@@ -60,6 +68,8 @@ export default function ChartsPage() {
   const [appliedFrom, setAppliedFrom] = useState("");
   const [appliedTo, setAppliedTo] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [comments, setComments] = useState<CommentedExpense[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
 
   // All categories available from the full data set
   const allCategories = Array.from(new Set(data.map((d) => d.category))).sort();
@@ -92,6 +102,15 @@ export default function ChartsPage() {
         }
       });
 
+    setCommentsLoading(true);
+    fetch(`/api/expenses/comments?${params.toString()}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+        return res.json() as Promise<CommentedExpense[]>;
+      })
+      .then((json) => { if (!cancelled) { setComments(json); setCommentsLoading(false); } })
+      .catch(() => { if (!cancelled) setCommentsLoading(false); });
+
     return () => { cancelled = true; };
   }, [appliedFrom, appliedTo]);
 
@@ -120,6 +139,24 @@ export default function ChartsPage() {
     setAppliedTo("");
     setSelectedCategories([]);
   };
+
+  // Group comments by month (YYYY-MM) or by exact date when a single day is selected
+  const singleDay = appliedFrom && appliedTo && appliedFrom === appliedTo;
+  const commentGroups: { label: string; items: CommentedExpense[] }[] = (() => {
+    if (comments.length === 0) return [];
+    if (singleDay) {
+      return [{ label: appliedFrom, items: comments }];
+    }
+    const map = new Map<string, CommentedExpense[]>();
+    for (const c of comments) {
+      const key = c.date.slice(0, 7);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, items]) => ({ label, items }));
+  })();
 
   return (
     <div className="space-y-6">
@@ -250,6 +287,38 @@ export default function ChartsPage() {
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* Comments section */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-base font-semibold text-gray-800">Expense Comments</h2>
+        {commentsLoading ? (
+          <p className="text-sm text-gray-500">Loading…</p>
+        ) : commentGroups.length === 0 ? (
+          <p className="text-sm text-gray-500">No comments found for this period.</p>
+        ) : (
+          <div className="space-y-6">
+            {commentGroups.map(({ label, items }) => (
+              <div key={label}>
+                <h3 className="mb-2 text-sm font-medium text-gray-600 border-b border-gray-100 pb-1">{label}</h3>
+                <ul className="divide-y divide-gray-100">
+                  {items.map((c) => (
+                    <li key={c.id} className="py-2 flex flex-col gap-0.5">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-sm font-medium text-gray-800 truncate">{c.description}</span>
+                        <span className="shrink-0 text-xs text-gray-400">{c.date}</span>
+                      </div>
+                      {c.category && (
+                        <span className="text-xs text-gray-500">{c.category}</span>
+                      )}
+                      <p className="text-sm text-gray-700 mt-0.5">{c.comments}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
