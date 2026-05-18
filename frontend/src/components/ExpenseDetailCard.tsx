@@ -1,7 +1,7 @@
 "use client";
 
 import AddExpenseModal from "@/components/AddExpenseModal";
-import type { Expense, RentalProperty } from "@/types/expense";
+import type { Category, Expense, RentalProperty } from "@/types/expense";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -42,8 +42,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   useEffect(() => {
     if (!editing) return;
     fetch("/api/categories")
-      .then((r) => r.json() as Promise<string[]>)
-      .then(setCategories)
+      .then((r) => r.json() as Promise<Category[]>)
+      .then((data) => setCategories(data.map((c) => c.name)))
       .catch(() => setCategories([]));
     fetch("/api/rental-properties")
       .then((r) => r.json() as Promise<RentalProperty[]>)
