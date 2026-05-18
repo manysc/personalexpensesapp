@@ -1,6 +1,6 @@
 "use client";
 
-import type { Expense } from "@/types/expense";
+import type { Category, Expense } from "@/types/expense";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -22,8 +22,8 @@ export default function CategoryEditor({ expense, onSaved }: Props) {
   useEffect(() => {
     if (!editing) return;
     fetch("/api/categories")
-      .then((r) => r.json() as Promise<string[]>)
-      .then(setCategories)
+      .then((r) => r.json() as Promise<Category[]>)
+      .then((data) => setCategories(data.map((c) => c.name)))
       .catch(() => setCategories([]));
   }, [editing]);
 

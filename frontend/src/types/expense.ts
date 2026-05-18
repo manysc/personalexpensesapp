@@ -45,3 +45,9 @@ export interface RentalPropertyRequest {
   lease_renewal_date: string | null;
   payment_day: number | null;
 }
+
+export interface Category {
+  id: number;
+  name: string;
+  keywords: string[];
+}

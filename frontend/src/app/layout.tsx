@@ -34,6 +34,12 @@ export default function RootLayout({
             >
               Rentals
             </Link>
+            <Link
+              href="/categories"
+              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+            >
+              Categories
+            </Link>
           </div>
           </div>
         </header>

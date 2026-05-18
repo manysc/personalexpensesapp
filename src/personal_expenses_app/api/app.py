@@ -1,4 +1,5 @@
 import math
+import json
 import os
 from contextlib import asynccontextmanager
 from decimal import Decimal
@@ -9,9 +10,11 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
-from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, select, text
+from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.exc import IntegrityError
+
+from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED_CATEGORIES
 
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
@@ -63,6 +66,14 @@ class _AllExpense(_Base):
     overridden = Column(Boolean, nullable=False, default=False, server_default="false")
     comments = Column(String(2000), nullable=True)
     property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
+
+
+class _Category(_Base):
+    __tablename__ = "categories"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+    keywords = Column(Text, nullable=False, default="[]")  # JSON array of strings
 
 
 def _get_engine():
@@ -156,6 +167,15 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS categories ("
+                "  id SERIAL PRIMARY KEY, "
+                "  name VARCHAR(100) NOT NULL UNIQUE, "
+                "  keywords TEXT NOT NULL DEFAULT '[]' "
+                ");"
+            )
+        )
         conn.commit()
 
 
@@ -222,6 +242,27 @@ class ExpenseCreateRequest(BaseModel):
     category: Optional[str] = None
     comments: Optional[str] = None
     property_id: Optional[int] = None
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+    keywords: list[str]
+
+    model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_row(cls, row: "_Category") -> "CategoryResponse":
+        return cls(  # type: ignore[call-arg]
+            id=row.id,
+            name=row.name,
+            keywords=json.loads(row.keywords or "[]"),  # type: ignore[arg-type]
+        )
+
+
+class CategoryRequest(BaseModel):
+    name: str
+    keywords: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -443,16 +484,80 @@ def override_category(
     return ExpenseResponse.model_validate(row)
 
 
-@app.get("/categories", response_model=list[str])
+@app.get("/categories", response_model=list[CategoryResponse])
 def list_categories(session: Session = Depends(get_session)):
-    """Return all distinct non-null categories sorted alphabetically."""
+    """Return all categories sorted by name."""
     rows = session.execute(
-        select(_AllExpense.category)
-        .where(_AllExpense.category.isnot(None))
-        .distinct()
-        .order_by(_AllExpense.category)
+        select(_Category).order_by(_Category.name)
     ).scalars().all()
-    return rows
+    return [CategoryResponse.from_orm_row(r) for r in rows]
+
+
+@app.post("/categories", response_model=CategoryResponse, status_code=201)
+def create_category(body: CategoryRequest, session: Session = Depends(get_session)):
+    """Create a new category."""
+    row = _Category(name=body.name.strip(), keywords=json.dumps(body.keywords))
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"Category '{body.name}' already exists.")
+    session.refresh(row)
+    return CategoryResponse.from_orm_row(row)
+
+
+@app.put("/categories/{category_id}", response_model=CategoryResponse)
+def update_category(
+    category_id: int,
+    body: CategoryRequest,
+    session: Session = Depends(get_session),
+):
+    """Update an existing category."""
+    row = session.get(_Category, category_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found.")
+    row.name = body.name.strip()
+    row.keywords = json.dumps(body.keywords)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"Category '{body.name}' already exists.")
+    session.refresh(row)
+    return CategoryResponse.from_orm_row(row)
+
+
+@app.delete("/categories/{category_id}", status_code=204)
+def delete_category(category_id: int, session: Session = Depends(get_session)):
+    """Delete a category."""
+    row = session.get(_Category, category_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found.")
+    session.delete(row)
+    session.commit()
+
+
+@app.post("/categories/seed", status_code=200)
+def seed_categories(session: Session = Depends(get_session)):
+    """Seed the categories table from the rule-based categorizer definitions.
+
+    Existing categories are left unchanged; only missing ones are inserted.
+    Returns counts of inserted and skipped categories.
+    """
+    inserted = 0
+    skipped = 0
+    for name, keywords in RULE_BASED_CATEGORIES.items():
+        existing = session.execute(
+            select(_Category).where(_Category.name == name)
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(_Category(name=name, keywords=json.dumps(keywords)))
+            inserted += 1
+        else:
+            skipped += 1
+    session.commit()
+    return {"inserted": inserted, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
