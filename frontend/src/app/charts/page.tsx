@@ -59,6 +59,14 @@ function pivot(items: SummaryItem[]): { rows: ChartRow[]; categories: string[] }
   return { rows, categories };
 }
 
+const INCOME_CATEGORY = "Income";
+const TRANSFER_CATEGORY = "Transfers";
+const POSITIVE_CATEGORIES = new Set(["Income", "Real State"]);
+
+function fmt(v: number): string {
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+}
+
 export default function ChartsPage() {
   const [data, setData] = useState<SummaryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,6 +128,32 @@ export default function ChartsPage() {
       : data.filter((d) => selectedCategories.includes(d.category));
 
   const { rows, categories } = pivot(filteredData);
+
+  // Summary table — uses full (unfiltered) data so category selection doesn't affect it
+  const tableMonths = Array.from(new Set(data.map((d) => d.month))).sort();
+  const tableCategories = Array.from(new Set(data.map((d) => d.category))).sort();
+  const expenseCategories = tableCategories.filter(
+    (c) => !POSITIVE_CATEGORIES.has(c) && c !== TRANSFER_CATEGORY
+  );
+  // lookup[month][category] = total
+  const lookup: Record<string, Record<string, number>> = {};
+  for (const item of data) {
+    if (!lookup[item.month]) lookup[item.month] = {};
+    lookup[item.month][item.category] = item.total;
+  }
+  const colTotals: Record<string, number> = {};
+  for (const cat of tableCategories) {
+    colTotals[cat] = tableMonths.reduce((s, m) => s + (lookup[m]?.[cat] ?? 0), 0);
+  }
+  const netByMonth: Record<string, number> = {};
+  for (const m of tableMonths) {
+    const positiveSum = tableCategories
+      .filter((c) => POSITIVE_CATEGORIES.has(c))
+      .reduce((s, c) => s - (lookup[m]?.[c] ?? 0), 0);
+    const expenseSum = expenseCategories.reduce((s, c) => s + (lookup[m]?.[c] ?? 0), 0);
+    netByMonth[m] = positiveSum - expenseSum;
+  }
+  const grandNet = tableMonths.reduce((s, m) => s + netByMonth[m], 0);
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) =>
@@ -285,6 +319,69 @@ export default function ChartsPage() {
               })}
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Summary table */}
+      {!loading && tableMonths.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <h2 className="px-6 pt-5 pb-3 text-base font-semibold text-gray-800">Monthly Summary</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-y border-gray-200">
+                  <th className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-left font-semibold text-gray-600">Month</th>
+                  {tableCategories.map((cat) => (
+                    <th key={cat} className="px-4 py-2 text-right font-semibold text-gray-600 whitespace-nowrap">{cat}</th>
+                  ))}
+                  <th className="px-4 py-2 text-right font-semibold text-gray-900 whitespace-nowrap border-l border-gray-200">Net</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {tableMonths.map((month) => {
+                  const net = netByMonth[month];
+                  return (
+                    <tr key={month} className="hover:bg-gray-50">
+                      <td className="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-2 font-medium text-gray-700 whitespace-nowrap">{month}</td>
+                      {tableCategories.map((cat) => {
+                        const v = lookup[month]?.[cat];
+                        const isPositive = POSITIVE_CATEGORIES.has(cat) && v !== undefined && v < 0;
+                        return (
+                          <td key={cat} className={`px-4 py-2 text-right whitespace-nowrap tabular-nums ${isPositive ? "text-green-700" : "text-gray-700"}`}>
+                            {v !== undefined ? fmt(isPositive ? -v : v) : ""}
+                          </td>
+                        );
+                      })}
+                      <td className={`px-4 py-2 text-right font-semibold whitespace-nowrap tabular-nums border-l border-gray-200 ${
+                        net >= 0 ? "text-green-700" : "text-red-600"
+                      }`}>
+                        {fmt(net)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
+                  <td className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-gray-700">Total</td>
+                  {tableCategories.map((cat) => {
+                    const v = colTotals[cat] ?? 0;
+                    const isPositive = POSITIVE_CATEGORIES.has(cat) && v < 0;
+                    return (
+                      <td key={cat} className={`px-4 py-2 text-right whitespace-nowrap tabular-nums ${isPositive ? "text-green-700" : "text-gray-800"}`}>
+                        {fmt(isPositive ? -v : v)}
+                      </td>
+                    );
+                  })}
+                  <td className={`px-4 py-2 text-right whitespace-nowrap tabular-nums border-l border-gray-200 ${
+                    grandNet >= 0 ? "text-green-700" : "text-red-600"
+                  }`}>
+                    {fmt(grandNet)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
 
