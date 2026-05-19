@@ -97,6 +97,34 @@ class ChaseFileLoader:
                     ) or line_stripped.startswith("Total Electronic"):
                         current_section = None
                         continue
+                    elif line_stripped.startswith("*end*") and current_section:
+                        # PDF page-boundary garbling can embed a transaction date's digits
+                        # into the *end* marker text, e.g.:
+                        #   "*end*deposi0ts and additio2ns /05 Zelle Payment From ... 1,325.00"
+                        # (the "02" from "02/05" gets split into "deposi0ts" and "additio2ns")
+                        # Recover by searching for a partial date (/DD) + description + amount.
+                        end_txn_match = re.search(
+                            r"/(\d{2})\s+(.+?)\s+([\d,]+\.\d{2})$", line_stripped
+                        )
+                        if end_txn_match:
+                            day = end_txn_match.group(1)
+                            description = end_txn_match.group(2).strip()
+                            amount = float(end_txn_match.group(3).replace(",", ""))
+                            month = str(statement_month_num).zfill(2)
+                            transaction = {
+                                "Date": f"{month}/{day}/{year}",
+                                "Description": description,
+                                "Amount": amount,
+                            }
+                            if current_section == "credits":
+                                credits.append(transaction)
+                            elif current_section == "debits":
+                                debits.append(transaction)
+                            logger.info(
+                                f"Recovered garbled transaction from *end* line: {transaction}"
+                            )
+                        current_section = None
+                        continue
 
                     # Skip headers and empty lines
                     if not current_section or not line_stripped:
