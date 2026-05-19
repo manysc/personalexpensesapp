@@ -24,6 +24,8 @@ interface CommentedExpense {
   description: string;
   category: string | null;
   comments: string;
+  debit: number | null;
+  credit: number | null;
 }
 
 interface ChartRow {
@@ -402,7 +404,14 @@ export default function ChartsPage() {
                     <li key={c.id} className="py-2 flex flex-col gap-0.5">
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-sm font-medium text-gray-800 truncate">{c.description}</span>
-                        <span className="shrink-0 text-xs text-gray-400">{c.date}</span>
+                        <div className="shrink-0 flex items-center gap-3">
+                          {c.credit != null && c.credit > 0 && (c.debit == null || c.credit > c.debit) ? (
+                            <span className="text-sm font-semibold text-green-700">{fmt(c.credit)}</span>
+                          ) : c.debit != null && c.debit > 0 ? (
+                            <span className="text-sm font-semibold text-gray-800">{fmt(c.debit)}</span>
+                          ) : null}
+                          <span className="text-xs text-gray-400">{c.date}</span>
+                        </div>
                       </div>
                       {c.category && (
                         <span className="text-xs text-gray-500">{c.category}</span>
