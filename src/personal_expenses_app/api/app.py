@@ -367,6 +367,8 @@ class CommentedExpense(BaseModel):
     description: str
     category: Optional[str]
     comments: str
+    debit: Optional[float] = None
+    credit: Optional[float] = None
 
 
 @app.get("/expenses/comments", response_model=list[CommentedExpense])
@@ -387,6 +389,12 @@ def expenses_comments(
         stmt = stmt.where(_AllExpense.date <= date_to)
     stmt = stmt.order_by(_AllExpense.date.asc(), _AllExpense.id.asc())
     rows = session.execute(stmt).scalars().all()
+    def _safe(v) -> Optional[float]:
+        if v is None:
+            return None
+        f = float(v)
+        return f if math.isfinite(f) else None
+
     return [
         CommentedExpense(
             id=r.id,
@@ -394,6 +402,8 @@ def expenses_comments(
             description=r.description,
             category=r.category,
             comments=r.comments,
+            debit=_safe(r.debit),
+            credit=_safe(r.credit),
         )
         for r in rows
     ]
