@@ -24,10 +24,15 @@ const inputClass =
 
 export default function FilterBar({ onApply, initialValues }: Props) {
   const [draft, setDraft] = useState<ExpenseFilters>(initialValues ?? EMPTY);
+  const [banks, setBanks] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
 
   useEffect(() => {
+    fetch("/api/banks")
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setBanks)
+      .catch(() => setBanks([]));
     fetch("/api/categories")
       .then((r) => r.json() as Promise<Category[]>)
       .then((data) => setCategories(data.map((c) => c.name)))
@@ -64,13 +69,18 @@ export default function FilterBar({ onApply, initialValues }: Props) {
           <label className="mb-1 block text-xs font-medium text-gray-600">
             Bank
           </label>
-          <input
-            type="text"
+          <select
             value={draft.bank}
             onChange={set("bank")}
-            placeholder="e.g. chase"
             className={inputClass}
-          />
+          >
+            <option value="">All banks</option>
+            {banks.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>

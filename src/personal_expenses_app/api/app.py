@@ -555,6 +555,18 @@ def create_category(body: CategoryRequest, session: Session = Depends(get_sessio
     return CategoryResponse.from_orm_row(row)
 
 
+@app.get("/banks", response_model=list[str])
+def list_banks(session: Session = Depends(get_session)):
+    """Return all distinct bank names sorted alphabetically."""
+    rows = session.execute(
+        select(_AllExpense.bank)
+        .where(_AllExpense.bank.isnot(None))
+        .distinct()
+        .order_by(_AllExpense.bank)
+    ).scalars().all()
+    return rows
+
+
 @app.put("/categories/{category_id}", response_model=CategoryResponse)
 def update_category(
     category_id: int,
