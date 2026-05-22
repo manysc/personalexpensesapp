@@ -1,6 +1,6 @@
 "use client";
 
-import type { Expense, RentalProperty } from "@/types/expense";
+import type { Category, Expense, RentalProperty } from "@/types/expense";
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
@@ -33,8 +33,8 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
 
   useEffect(() => {
     fetch("/api/categories")
-      .then((r) => r.json() as Promise<string[]>)
-      .then(setCategories)
+      .then((r) => r.json() as Promise<Category[]>)
+      .then((data) => setCategories(data.map((c) => c.name)))
       .catch(() => setCategories([]));
     fetch("/api/rental-properties")
       .then((r) => r.json() as Promise<RentalProperty[]>)
