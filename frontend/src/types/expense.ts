@@ -51,3 +51,34 @@ export interface Category {
   name: string;
   keywords: string[];
 }
+
+export interface Vehicle {
+  id: number;
+  alias: string;
+  make: string;
+  model: string;
+  year: number;
+  registration_due_date: string | null;
+}
+
+export interface VehicleRequest {
+  alias: string;
+  make: string;
+  model: string;
+  year: number;
+  registration_due_date: string | null;
+}
+
+export interface VehicleService {
+  id: number;
+  vehicle_id: number;
+  date: string;
+  description: string;
+  mileage: number | null;
+}
+
+export interface VehicleServiceRequest {
+  date: string;
+  description: string;
+  mileage: number | null;
+}

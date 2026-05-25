@@ -47,6 +47,27 @@ class _RentalProperty(_Base):
     payment_day = Column(Integer, nullable=True)  # Day of month 1-31
 
 
+class _Vehicle(_Base):
+    __tablename__ = "vehicles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alias = Column(String(100), nullable=False, unique=True)
+    make = Column(String(100), nullable=False)
+    model = Column(String(100), nullable=False)
+    year = Column(Integer, nullable=False)
+    registration_due_date = Column(String(10), nullable=True)  # YYYY-MM-DD
+
+
+class _VehicleService(_Base):
+    __tablename__ = "vehicle_services"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    vehicle_id = Column(Integer, nullable=False)
+    date = Column(String(10), nullable=False)  # YYYY-MM-DD
+    description = Column(String(500), nullable=False)
+    mileage = Column(Integer, nullable=True)
+
+
 class _AllExpense(_Base):
     __tablename__ = "all_expenses"
     __table_args__ = (
@@ -173,6 +194,45 @@ def _run_migrations(engine) -> None:
                 "  id SERIAL PRIMARY KEY, "
                 "  name VARCHAR(100) NOT NULL UNIQUE, "
                 "  keywords TEXT NOT NULL DEFAULT '[]' "
+                ");"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS vehicles ("
+                "  id SERIAL PRIMARY KEY, "
+                "  alias VARCHAR(100) NOT NULL UNIQUE, "
+                "  make VARCHAR(100) NOT NULL, "
+                "  model VARCHAR(100) NOT NULL, "
+                "  year INTEGER NOT NULL, "
+                "  registration_due_date VARCHAR(10) "
+                ");"
+            )
+        )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'vehicles' AND column_name = 'alias' "
+                "  ) THEN "
+                "    ALTER TABLE vehicles ADD COLUMN alias VARCHAR(100) NOT NULL DEFAULT ''; "
+                "    UPDATE vehicles SET alias = make || ' ' || model || ' ' || year || ' #' || id "
+                "    WHERE alias = ''; "
+                "    CREATE UNIQUE INDEX IF NOT EXISTS uix_vehicles_alias ON vehicles(alias); "
+                "    ALTER TABLE vehicles ALTER COLUMN alias DROP DEFAULT; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS vehicle_services ("
+                "  id SERIAL PRIMARY KEY, "
+                "  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE, "
+                "  date VARCHAR(10) NOT NULL, "
+                "  description VARCHAR(500) NOT NULL, "
+                "  mileage INTEGER "
                 ");"
             )
         )
@@ -755,6 +815,186 @@ def delete_rental_property(
     row = session.get(_RentalProperty, property_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
+    session.delete(row)
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Vehicle models and routes
+# ---------------------------------------------------------------------------
+
+class VehicleResponse(BaseModel):
+    id: int
+    alias: str
+    make: str
+    model: str
+    year: int
+    registration_due_date: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class VehicleRequest(BaseModel):
+    alias: str
+    make: str
+    model: str
+    year: int
+    registration_due_date: Optional[str] = None
+
+
+class VehicleServiceResponse(BaseModel):
+    id: int
+    vehicle_id: int
+    date: str
+    description: str
+    mileage: Optional[int] = None
+
+    model_config = {"from_attributes": True}
+
+
+class VehicleServiceRequest(BaseModel):
+    date: str
+    description: str
+    mileage: Optional[int] = None
+
+
+@app.get("/vehicles", response_model=list[VehicleResponse])
+def list_vehicles(session: Session = Depends(get_session)):
+    """Return all vehicles sorted by year descending, then make/model."""
+    rows = session.execute(
+        select(_Vehicle).order_by(_Vehicle.year.desc(), _Vehicle.make, _Vehicle.model)
+    ).scalars().all()
+    return [VehicleResponse.model_validate(r) for r in rows]
+
+
+@app.post("/vehicles", response_model=VehicleResponse, status_code=201)
+def create_vehicle(body: VehicleRequest, session: Session = Depends(get_session)):
+    """Create a new vehicle."""
+    row = _Vehicle(
+        alias=body.alias.strip(),
+        make=body.make.strip(),
+        model=body.model.strip(),
+        year=body.year,
+        registration_due_date=body.registration_due_date,
+    )
+    session.add(row)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"A vehicle with alias '{body.alias}' already exists.")
+    session.refresh(row)
+    return VehicleResponse.model_validate(row)
+
+
+@app.get("/vehicles/{vehicle_id}", response_model=VehicleResponse)
+def get_vehicle(vehicle_id: int, session: Session = Depends(get_session)):
+    """Return a single vehicle by ID."""
+    row = session.get(_Vehicle, vehicle_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
+    return VehicleResponse.model_validate(row)
+
+
+@app.put("/vehicles/{vehicle_id}", response_model=VehicleResponse)
+def update_vehicle(
+    vehicle_id: int,
+    body: VehicleRequest,
+    session: Session = Depends(get_session),
+):
+    """Update an existing vehicle."""
+    row = session.get(_Vehicle, vehicle_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
+    row.alias = body.alias.strip()
+    row.make = body.make.strip()
+    row.model = body.model.strip()
+    row.year = body.year
+    row.registration_due_date = body.registration_due_date
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=f"A vehicle with alias '{body.alias}' already exists.")
+    session.refresh(row)
+    return VehicleResponse.model_validate(row)
+
+
+@app.delete("/vehicles/{vehicle_id}", status_code=204)
+def delete_vehicle(vehicle_id: int, session: Session = Depends(get_session)):
+    """Delete a vehicle and its associated services."""
+    row = session.get(_Vehicle, vehicle_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
+    session.delete(row)
+    session.commit()
+
+
+@app.get("/vehicles/{vehicle_id}/services", response_model=list[VehicleServiceResponse])
+def list_vehicle_services(vehicle_id: int, session: Session = Depends(get_session)):
+    """Return all maintenance services for a vehicle, sorted by date descending."""
+    vehicle = session.get(_Vehicle, vehicle_id)
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
+    rows = session.execute(
+        select(_VehicleService)
+        .where(_VehicleService.vehicle_id == vehicle_id)
+        .order_by(_VehicleService.date.desc(), _VehicleService.id.desc())
+    ).scalars().all()
+    return [VehicleServiceResponse.model_validate(r) for r in rows]
+
+
+@app.post("/vehicles/{vehicle_id}/services", response_model=VehicleServiceResponse, status_code=201)
+def create_vehicle_service(
+    vehicle_id: int,
+    body: VehicleServiceRequest,
+    session: Session = Depends(get_session),
+):
+    """Add a maintenance service record to a vehicle."""
+    vehicle = session.get(_Vehicle, vehicle_id)
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
+    row = _VehicleService(
+        vehicle_id=vehicle_id,
+        date=body.date,
+        description=body.description.strip(),
+        mileage=body.mileage,
+    )
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return VehicleServiceResponse.model_validate(row)
+
+
+@app.put("/vehicles/{vehicle_id}/services/{service_id}", response_model=VehicleServiceResponse)
+def update_vehicle_service(
+    vehicle_id: int,
+    service_id: int,
+    body: VehicleServiceRequest,
+    session: Session = Depends(get_session),
+):
+    """Update a maintenance service record."""
+    row = session.get(_VehicleService, service_id)
+    if row is None or row.vehicle_id != vehicle_id:
+        raise HTTPException(status_code=404, detail=f"Service {service_id} not found for vehicle {vehicle_id}.")
+    row.date = body.date
+    row.description = body.description.strip()
+    row.mileage = body.mileage
+    session.commit()
+    session.refresh(row)
+    return VehicleServiceResponse.model_validate(row)
+
+
+@app.delete("/vehicles/{vehicle_id}/services/{service_id}", status_code=204)
+def delete_vehicle_service(
+    vehicle_id: int,
+    service_id: int,
+    session: Session = Depends(get_session),
+):
+    """Delete a maintenance service record."""
+    row = session.get(_VehicleService, service_id)
+    if row is None or row.vehicle_id != vehicle_id:
+        raise HTTPException(status_code=404, detail=f"Service {service_id} not found for vehicle {vehicle_id}.")
     session.delete(row)
     session.commit()
 
