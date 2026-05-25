@@ -505,6 +505,53 @@ def update_expense(
     return ExpenseResponse.model_validate(row)
 
 
+class BulkUpdateRequest(BaseModel):
+    ids: list[int]
+    category: Optional[str] = None
+    comments: Optional[str] = None
+    property_id: Optional[int] = None
+
+
+@app.post("/expenses/bulk-update", response_model=list[int])
+def bulk_update_expenses(
+    body: BulkUpdateRequest,
+    session: Session = Depends(get_session),
+):
+    """Apply the same field update to multiple expenses at once.
+
+    Only fields present in the request body are modified; others are left
+    unchanged.  All updated expenses are marked as overridden.
+    Returns the list of IDs that were successfully updated.
+    """
+    if not body.ids:
+        return []
+
+    fields_set = body.model_fields_set - {"ids"}
+    if not fields_set:
+        raise HTTPException(status_code=422, detail="At least one field to update must be provided.")
+
+    updated_ids: list[int] = []
+    for expense_id in body.ids:
+        row = session.get(_AllExpense, expense_id)
+        if row is None:
+            continue
+        if "category" in fields_set:
+            row.category = body.category
+        if "comments" in fields_set:
+            row.comments = body.comments
+        if "property_id" in fields_set:
+            if body.property_id is not None:
+                prop = session.get(_RentalProperty, body.property_id)
+                if prop is None:
+                    raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
+            row.property_id = body.property_id
+        row.overridden = True
+        updated_ids.append(expense_id)
+
+    session.commit()
+    return updated_ids
+
+
 @app.delete("/expenses/{expense_id}", status_code=204)
 def delete_expense(expense_id: int, session: Session = Depends(get_session)):
     """Delete an expense by its ID."""
