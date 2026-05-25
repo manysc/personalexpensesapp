@@ -87,6 +87,7 @@ class _AllExpense(_Base):
     overridden = Column(Boolean, nullable=False, default=False, server_default="false")
     comments = Column(String(2000), nullable=True)
     property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
+    vehicle_id = Column(Integer, nullable=True)  # FK to vehicles.id
 
 
 class _Category(_Base):
@@ -236,6 +237,19 @@ def _run_migrations(engine) -> None:
                 ");"
             )
         )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'vehicle_id' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.commit()
 
 
@@ -260,6 +274,7 @@ class ExpenseResponse(BaseModel):
     overridden: bool = False
     comments: Optional[str] = None
     property_id: Optional[int] = None
+    vehicle_id: Optional[int] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -284,6 +299,7 @@ class ExpenseUpdateRequest(BaseModel):
     category: Optional[str] = None
     comments: Optional[str] = None
     property_id: Optional[int] = None
+    vehicle_id: Optional[int] = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -372,7 +388,9 @@ def list_expenses(
     description: Optional[str] = Query(default=None, description="Filter by description substring (case-insensitive)"),
     comments: Optional[str] = Query(default=None, description="Filter by comments substring (case-insensitive)"),
     property_id: Optional[int] = Query(default=None, description="Filter by rental property ID"),
+    vehicle_id: Optional[int] = Query(default=None, description="Filter by vehicle ID"),
     overridden_only: bool = Query(default=False, description="If true, return only manually overridden expenses"),
+
     limit: int = Query(default=100, ge=1, le=1000, description="Max number of results to return"),
     offset: int = Query(default=0, ge=0, description="Number of results to skip"),
     session: Session = Depends(get_session),
@@ -394,6 +412,8 @@ def list_expenses(
         stmt = stmt.where(_AllExpense.comments.ilike(f"%{comments}%"))
     if property_id is not None:
         stmt = stmt.where(_AllExpense.property_id == property_id)
+    if vehicle_id is not None:
+        stmt = stmt.where(_AllExpense.vehicle_id == vehicle_id)
     if overridden_only:
         stmt = stmt.where(_AllExpense.overridden.is_(True))
 
@@ -557,6 +577,13 @@ def update_expense(
                 raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
         row.property_id = body.property_id
         updated = True
+    if "vehicle_id" in body.model_fields_set:
+        if body.vehicle_id is not None:
+            veh = session.get(_Vehicle, body.vehicle_id)
+            if veh is None:
+                raise HTTPException(status_code=404, detail=f"Vehicle {body.vehicle_id} not found.")
+        row.vehicle_id = body.vehicle_id
+        updated = True
 
     if updated:
         row.overridden = True
@@ -570,6 +597,7 @@ class BulkUpdateRequest(BaseModel):
     category: Optional[str] = None
     comments: Optional[str] = None
     property_id: Optional[int] = None
+    vehicle_id: Optional[int] = None
 
 
 @app.post("/expenses/bulk-update", response_model=list[int])
@@ -605,6 +633,12 @@ def bulk_update_expenses(
                 if prop is None:
                     raise HTTPException(status_code=404, detail=f"Rental property {body.property_id} not found.")
             row.property_id = body.property_id
+        if "vehicle_id" in fields_set:
+            if body.vehicle_id is not None:
+                veh = session.get(_Vehicle, body.vehicle_id)
+                if veh is None:
+                    raise HTTPException(status_code=404, detail=f"Vehicle {body.vehicle_id} not found.")
+            row.vehicle_id = body.vehicle_id
         row.overridden = True
         updated_ids.append(expense_id)
 

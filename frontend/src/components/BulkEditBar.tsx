@@ -1,6 +1,6 @@
 "use client";
 
-import type { Category, RentalProperty } from "@/types/expense";
+import type { Category, RentalProperty, Vehicle } from "@/types/expense";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -9,11 +9,12 @@ interface Props {
   onApplied: (updatedIds: number[]) => void;
 }
 
-type Field = "category" | "property_id" | "comments";
+type Field = "category" | "property_id" | "vehicle_id" | "comments";
 
 const FIELD_LABELS: Record<Field, string> = {
   category: "Category",
   property_id: "Property",
+  vehicle_id: "Vehicle",
   comments: "Comments",
 };
 
@@ -24,9 +25,11 @@ export default function BulkEditBar({ selectedIds, onClear, onApplied }: Props) 
   const [field, setField] = useState<Field>("category");
   const [categoryValue, setCategoryValue] = useState("");
   const [propertyValue, setPropertyValue] = useState("");
+  const [vehicleValue, setVehicleValue] = useState("");
   const [commentsValue, setCommentsValue] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +42,10 @@ export default function BulkEditBar({ selectedIds, onClear, onApplied }: Props) 
       .then((r) => r.json() as Promise<RentalProperty[]>)
       .then(setProperties)
       .catch(() => {});
+    fetch("/api/vehicles")
+      .then((r) => r.json() as Promise<Vehicle[]>)
+      .then(setVehicles)
+      .catch(() => {});
   }, []);
 
   async function handleApply() {
@@ -48,6 +55,7 @@ export default function BulkEditBar({ selectedIds, onClear, onApplied }: Props) 
     const body: Record<string, unknown> = { ids: Array.from(selectedIds) };
     if (field === "category") body.category = categoryValue || null;
     if (field === "property_id") body.property_id = propertyValue ? parseInt(propertyValue, 10) : null;
+    if (field === "vehicle_id") body.vehicle_id = vehicleValue ? parseInt(vehicleValue, 10) : null;
     if (field === "comments") body.comments = commentsValue || null;
 
     try {
@@ -123,6 +131,22 @@ export default function BulkEditBar({ selectedIds, onClear, onApplied }: Props) 
           {properties.map((p) => (
             <option key={p.id} value={String(p.id)}>
               {p.alias}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {field === "vehicle_id" && (
+        <select
+          value={vehicleValue}
+          onChange={(e) => setVehicleValue(e.target.value)}
+          className={selectClass}
+          disabled={saving}
+        >
+          <option value="">— clear —</option>
+          {vehicles.map((v) => (
+            <option key={v.id} value={String(v.id)}>
+              {v.alias}
             </option>
           ))}
         </select>

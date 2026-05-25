@@ -1,6 +1,6 @@
 "use client";
 
-import type { Category, ExpenseFilters, RentalProperty } from "@/types/expense";
+import type { Category, ExpenseFilters, RentalProperty, Vehicle } from "@/types/expense";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -16,6 +16,7 @@ const EMPTY: ExpenseFilters = {
   description: "",
   comments: "",
   property_id: "",
+  vehicle_id: "",
   overridden_only: false,
 };
 
@@ -27,6 +28,7 @@ export default function FilterBar({ onApply, initialValues }: Props) {
   const [banks, setBanks] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
 
   useEffect(() => {
     fetch("/api/banks")
@@ -41,6 +43,10 @@ export default function FilterBar({ onApply, initialValues }: Props) {
       .then((r) => r.json() as Promise<RentalProperty[]>)
       .then(setProperties)
       .catch(() => setProperties([]));
+    fetch("/api/vehicles")
+      .then((r) => r.json() as Promise<Vehicle[]>)
+      .then(setVehicles)
+      .catch(() => setVehicles([]));
   }, []);
 
   const set =
@@ -165,6 +171,24 @@ export default function FilterBar({ onApply, initialValues }: Props) {
             {properties.map((p) => (
               <option key={p.id} value={String(p.id)}>
                 {p.alias}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Vehicle
+          </label>
+          <select
+            value={draft.vehicle_id}
+            onChange={set("vehicle_id")}
+            className={inputClass}
+          >
+            <option value="">All vehicles</option>
+            {vehicles.map((v) => (
+              <option key={v.id} value={String(v.id)}>
+                {v.alias}
               </option>
             ))}
           </select>

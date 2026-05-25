@@ -1,7 +1,7 @@
 "use client";
 
 import AddExpenseModal from "@/components/AddExpenseModal";
-import type { Category, Expense, RentalProperty } from "@/types/expense";
+import type { Category, Expense, RentalProperty, Vehicle } from "@/types/expense";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -20,12 +20,16 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   // Committed values (shown in view mode)
   const [category, setCategory] = useState(expense.category ?? "");
   const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
+  const [vehicleId, setVehicleId] = useState<number | null>(expense.vehicle_id);
   const [comments, setComments] = useState(expense.comments ?? "");
 
   // Draft values (used while editing)
   const [draftCategory, setDraftCategory] = useState(category);
   const [draftPropertyId, setDraftPropertyId] = useState<string>(
     expense.property_id != null ? String(expense.property_id) : ""
+  );
+  const [draftVehicleId, setDraftVehicleId] = useState<string>(
+    expense.vehicle_id != null ? String(expense.vehicle_id) : ""
   );
   const [draftComments, setDraftComments] = useState(comments);
 
@@ -38,6 +42,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   // Options loaded once when entering edit mode
   const [categories, setCategories] = useState<string[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
 
   useEffect(() => {
     if (!editing) return;
@@ -49,11 +54,16 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       .then((r) => r.json() as Promise<RentalProperty[]>)
       .then(setProperties)
       .catch(() => setProperties([]));
+    fetch("/api/vehicles")
+      .then((r) => r.json() as Promise<Vehicle[]>)
+      .then(setVehicles)
+      .catch(() => setVehicles([]));
   }, [editing]);
 
   function handleEdit() {
     setDraftCategory(category);
     setDraftPropertyId(propertyId != null ? String(propertyId) : "");
+    setDraftVehicleId(vehicleId != null ? String(vehicleId) : "");
     setDraftComments(comments);
     setError(null);
     setEditing(true);
@@ -85,6 +95,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       const body: Record<string, unknown> = {
         category: draftCategory || null,
         property_id: draftPropertyId ? Number(draftPropertyId) : null,
+        vehicle_id: draftVehicleId ? Number(draftVehicleId) : null,
         comments: draftComments || null,
       };
       const res = await fetch(`/api/expenses/${expense.id}`, {
@@ -96,6 +107,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       const updated: Expense = await res.json();
       setCategory(updated.category ?? "");
       setPropertyId(updated.property_id);
+      setVehicleId(updated.vehicle_id);
       setComments(updated.comments ?? "");
       setOverridden(updated.overridden);
       setEditing(false);
@@ -108,6 +120,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
 
   const propertyAlias =
     properties.find((p) => p.id === propertyId)?.alias ?? null;
+  const vehicleAlias =
+    vehicles.find((v) => v.id === vehicleId)?.alias ?? null;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -212,6 +226,32 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             ) : propertyId != null ? (
               <span className="inline-block rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
                 {propertyAlias ?? `#${propertyId}`}
+              </span>
+            ) : (
+              <span className="text-sm text-gray-400">—</span>
+            )}
+          </dd>
+        </div>
+
+        {/* Vehicle */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+          <dt className="text-sm font-medium text-gray-500">Vehicle</dt>
+          <dd className="col-span-2">
+            {editing ? (
+              <select
+                value={draftVehicleId}
+                onChange={(e) => setDraftVehicleId(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              >
+                <option value="">— none —</option>
+                {vehicles.map((v) => (
+                  <option key={v.id} value={String(v.id)}>{v.alias}</option>
+                ))}
+              </select>
+            ) : vehicleId != null ? (
+              <span className="inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                {vehicleAlias ?? `#${vehicleId}`}
               </span>
             ) : (
               <span className="text-sm text-gray-400">—</span>
