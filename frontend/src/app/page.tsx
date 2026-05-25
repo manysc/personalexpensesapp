@@ -1,6 +1,7 @@
 "use client";
 
 import AddExpenseModal from "@/components/AddExpenseModal";
+import BulkEditBar from "@/components/BulkEditBar";
 import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
@@ -44,6 +45,8 @@ export default function ExpensesPage() {
   const [error, setError] = useState<string | null>(null);
   const [propertyMap, setPropertyMap] = useState<Record<number, string>>({});
   const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     fetch("/api/rental-properties")
@@ -96,7 +99,7 @@ export default function ExpensesPage() {
     return () => {
       cancelled = true;
     };
-  }, [appliedFilters, page]);
+  }, [appliedFilters, page, reloadKey]);
 
   const pushUrl = useCallback(
     (filters: ExpenseFilters, p: number) => {
@@ -159,12 +162,28 @@ export default function ExpensesPage() {
         </div>
       ) : data ? (
         <>
-          <p className="text-sm text-gray-500">
-            {data.total === 0
-              ? "No expenses found"
-              : `Showing ${data.offset + 1}–${data.offset + data.items.length} of ${data.total} expenses`}
-          </p>
-          <ExpensesTable items={data.items} loading={loading} propertyMap={propertyMap} />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500">
+              {data.total === 0
+                ? "No expenses found"
+                : `Showing ${data.offset + 1}–${data.offset + data.items.length} of ${data.total} expenses`}
+            </p>
+          </div>
+          <BulkEditBar
+            selectedIds={selectedIds}
+            onClear={() => setSelectedIds(new Set())}
+            onApplied={() => {
+              setSelectedIds(new Set());
+              setReloadKey((k) => k + 1);
+            }}
+          />
+          <ExpensesTable
+            items={data.items}
+            loading={loading}
+            propertyMap={propertyMap}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+          />
           {totalPages > 1 && (
             <Pagination
               page={page}
