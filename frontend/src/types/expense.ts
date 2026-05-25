@@ -9,6 +9,7 @@ export interface Expense {
   overridden: boolean;
   comments: string | null;
   property_id: number | null;
+  vehicle_id: number | null;
 }
 
 export interface ExpenseListResponse {
@@ -26,6 +27,7 @@ export interface ExpenseFilters {
   description: string;
   comments: string;
   property_id: string;
+  vehicle_id: string;
   overridden_only: boolean;
 }
 
@@ -50,6 +52,15 @@ export interface Category {
   id: number;
   name: string;
   keywords: string[];
+}
+
+export interface Vehicle {
+  id: number;
+  alias: string;
+  make: string;
+  model: string;
+  year: number;
+  registration_due_date: string | null;
 }
 
 export interface Vehicle {

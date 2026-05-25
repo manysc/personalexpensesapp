@@ -7,6 +7,7 @@ interface Props {
   items: Expense[];
   loading?: boolean;
   propertyMap?: Record<number, string>;
+  vehicleMap?: Record<number, string>;
   selectedIds?: Set<number>;
   onSelectionChange?: (ids: Set<number>) => void;
 }
@@ -23,6 +24,7 @@ export default function ExpensesTable({
   items,
   loading = false,
   propertyMap = {},
+  vehicleMap = {},
   selectedIds,
   onSelectionChange,
 }: Props) {
@@ -95,6 +97,7 @@ export default function ExpensesTable({
                 { label: "Credit", align: "right" },
                 { label: "Category", align: "left" },
                 { label: "Property", align: "left" },
+                { label: "Vehicle", align: "left" },
                 { label: "Comments", align: "left" },
                 { label: "Edited", align: "left" },
               ].map(({ label, align }) => (
@@ -163,6 +166,15 @@ export default function ExpensesTable({
                     {expense.property_id != null && propertyMap[expense.property_id] ? (
                       <span className="inline-block rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
                         {propertyMap[expense.property_id]}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {expense.vehicle_id != null && vehicleMap[expense.vehicle_id] ? (
+                      <span className="inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        {vehicleMap[expense.vehicle_id]}
                       </span>
                     ) : (
                       <span className="text-gray-400">—</span>

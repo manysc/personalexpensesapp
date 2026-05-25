@@ -5,7 +5,7 @@ import BulkEditBar from "@/components/BulkEditBar";
 import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
-import type { ExpenseFilters, ExpenseListResponse, RentalProperty } from "@/types/expense";
+import type { ExpenseFilters, ExpenseListResponse, RentalProperty, Vehicle } from "@/types/expense";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -18,6 +18,7 @@ const EMPTY_FILTERS: ExpenseFilters = {
   description: "",
   comments: "",
   property_id: "",
+  vehicle_id: "",
   overridden_only: false,
 };
 
@@ -33,6 +34,7 @@ export default function ExpensesPage() {
     description: searchParams.get("description") ?? "",
     comments: searchParams.get("comments") ?? "",
     property_id: searchParams.get("property_id") ?? "",
+    vehicle_id: searchParams.get("vehicle_id") ?? "",
     overridden_only: searchParams.get("overridden_only") === "true",
   };
   const pageFromUrl = parseInt(searchParams.get("page") ?? "0", 10);
@@ -44,6 +46,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [propertyMap, setPropertyMap] = useState<Record<number, string>>({});
+  const [vehicleMap, setVehicleMap] = useState<Record<number, string>>({});
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
@@ -55,6 +58,14 @@ export default function ExpensesPage() {
         const map: Record<number, string> = {};
         for (const p of props) map[p.id] = p.alias;
         setPropertyMap(map);
+      })
+      .catch(() => {});
+    fetch("/api/vehicles")
+      .then((r) => r.json() as Promise<Vehicle[]>)
+      .then((vehs) => {
+        const map: Record<number, string> = {};
+        for (const v of vehs) map[v.id] = v.alias;
+        setVehicleMap(map);
       })
       .catch(() => {});
   }, []);
@@ -72,6 +83,7 @@ export default function ExpensesPage() {
     if (appliedFilters.description) params.set("description", appliedFilters.description);
     if (appliedFilters.comments) params.set("comments", appliedFilters.comments);
     if (appliedFilters.property_id) params.set("property_id", appliedFilters.property_id);
+    if (appliedFilters.vehicle_id) params.set("vehicle_id", appliedFilters.vehicle_id);
     if (appliedFilters.overridden_only) params.set("overridden_only", "true");
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(page * PAGE_SIZE));
@@ -111,6 +123,7 @@ export default function ExpensesPage() {
       if (filters.description) params.set("description", filters.description);
       if (filters.comments) params.set("comments", filters.comments);
       if (filters.property_id) params.set("property_id", filters.property_id);
+      if (filters.vehicle_id) params.set("vehicle_id", filters.vehicle_id);
       if (filters.overridden_only) params.set("overridden_only", "true");
       if (p > 0) params.set("page", String(p));
       const qs = params.toString();
@@ -181,6 +194,7 @@ export default function ExpensesPage() {
             items={data.items}
             loading={loading}
             propertyMap={propertyMap}
+            vehicleMap={vehicleMap}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
           />
