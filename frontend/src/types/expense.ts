@@ -10,6 +10,7 @@ export interface Expense {
   comments: string | null;
   property_id: number | null;
   vehicle_id: number | null;
+  receipt_filename: string | null;
 }
 
 export interface ExpenseListResponse {

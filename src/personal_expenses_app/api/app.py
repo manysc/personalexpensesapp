@@ -1,14 +1,15 @@
 import math
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -18,6 +19,9 @@ from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED
 
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
+
+RECEIPTS_DIR = Path(os.environ.get("RECEIPTS_DIR", str(_project_root / "receipts")))
+_ALLOWED_RECEIPT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -88,6 +92,7 @@ class _AllExpense(_Base):
     comments = Column(String(2000), nullable=True)
     property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
     vehicle_id = Column(Integer, nullable=True)  # FK to vehicles.id
+    receipt_filename = Column(String(500), nullable=True)
 
 
 class _Category(_Base):
@@ -250,6 +255,19 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'receipt_filename' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN receipt_filename VARCHAR(500); "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.commit()
 
 
@@ -275,6 +293,7 @@ class ExpenseResponse(BaseModel):
     comments: Optional[str] = None
     property_id: Optional[int] = None
     vehicle_id: Optional[int] = None
+    receipt_filename: Optional[str] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -703,6 +722,102 @@ def delete_expense(expense_id: int, session: Session = Depends(get_session)):
     if row is None:
         raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
     session.delete(row)
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Receipt upload / download / delete
+# ---------------------------------------------------------------------------
+
+@app.post("/expenses/{expense_id}/receipt", response_model=ExpenseResponse)
+async def upload_receipt(
+    expense_id: int,
+    receipt: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    """Upload (or replace) a receipt file for an expense."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+
+    original_name = receipt.filename or "receipt"
+    safe_name = re.sub(r"[^\w\-.]", "_", original_name)
+    ext = Path(safe_name).suffix.lower()
+    if ext not in _ALLOWED_RECEIPT_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' is not allowed. Accepted: {', '.join(sorted(_ALLOWED_RECEIPT_EXTENSIONS))}",
+        )
+
+    stored_name = f"{expense_id}_{safe_name}"
+
+    # Remove old receipt file if present
+    if row.receipt_filename:
+        old_path = RECEIPTS_DIR / row.receipt_filename
+        if old_path.exists():
+            old_path.unlink()
+
+    RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = (RECEIPTS_DIR / stored_name).resolve()
+    if not str(dest).startswith(str(RECEIPTS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    contents = await receipt.read()
+    dest.write_bytes(contents)
+
+    row.receipt_filename = stored_name
+    session.commit()
+    session.refresh(row)
+    return ExpenseResponse.model_validate(row)
+
+
+@app.get("/expenses/{expense_id}/receipt")
+def get_receipt(
+    expense_id: int,
+    inline: bool = Query(default=False, description="If true, set Content-Disposition to inline (view in browser)"),
+    session: Session = Depends(get_session),
+):
+    """Download or view the receipt attached to an expense."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    if not row.receipt_filename:
+        raise HTTPException(status_code=404, detail="No receipt attached to this expense.")
+
+    file_path = (RECEIPTS_DIR / row.receipt_filename).resolve()
+    if not str(file_path).startswith(str(RECEIPTS_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid receipt path.")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Receipt file not found on disk.")
+
+    # Strip the leading "{expense_id}_" prefix for a clean download name
+    prefix = f"{expense_id}_"
+    display_name = row.receipt_filename[len(prefix):] if row.receipt_filename.startswith(prefix) else row.receipt_filename
+
+    return FileResponse(
+        path=str(file_path),
+        filename=display_name,
+        content_disposition_type="inline" if inline else "attachment",
+    )
+
+
+@app.delete("/expenses/{expense_id}/receipt", status_code=204)
+def delete_receipt(
+    expense_id: int,
+    session: Session = Depends(get_session),
+):
+    """Remove the receipt attached to an expense."""
+    row = session.get(_AllExpense, expense_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Expense {expense_id} not found.")
+    if not row.receipt_filename:
+        raise HTTPException(status_code=404, detail="No receipt attached to this expense.")
+
+    file_path = (RECEIPTS_DIR / row.receipt_filename).resolve()
+    if str(file_path).startswith(str(RECEIPTS_DIR.resolve())) and file_path.exists():
+        file_path.unlink()
+
+    row.receipt_filename = None
     session.commit()
 
 
