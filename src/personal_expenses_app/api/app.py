@@ -538,6 +538,56 @@ def expenses_summary(
     return JSONResponse(content=result)
 
 
+@app.get("/expenses/property-summary")
+def expenses_property_summary(
+    date_from: Optional[str] = Query(default=None, description="Include expenses on or after this date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
+    session: Session = Depends(get_session),
+):
+    """Return net expenses (debit - credit) grouped by month and rental property alias."""
+    conditions = ["e.property_id IS NOT NULL"]
+    params: dict = {}
+
+    if date_from is not None:
+        conditions.append("e.date >= :date_from")
+        params["date_from"] = date_from
+    if date_to is not None:
+        conditions.append("e.date <= :date_to")
+        params["date_to"] = date_to
+
+    where_clause = " AND ".join(conditions)
+    sql = text(f"""
+        SELECT
+            substring(e.date, 1, 7) AS month,
+            p.alias AS property,
+            SUM(CASE WHEN e.debit IS NULL OR e.debit = 'NaN'::numeric THEN 0 ELSE e.debit END)::float  AS debit_total,
+            SUM(CASE WHEN e.credit IS NULL OR e.credit = 'NaN'::numeric THEN 0 ELSE e.credit END)::float AS credit_total
+        FROM all_expenses e
+        JOIN rental_properties p ON e.property_id = p.id
+        WHERE {where_clause}
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+    """)
+
+    rows = session.execute(sql, params).fetchall()
+
+    def safe_float(v) -> float:
+        if v is None:
+            return 0.0
+        f = float(v)
+        return f if math.isfinite(f) else 0.0
+
+    result = [
+        {
+            "month": r[0],
+            "property": r[1],
+            "total": safe_float(r[2]) - safe_float(r[3]),
+        }
+        for r in rows
+    ]
+    return JSONResponse(content=result)
+
+
 @app.get("/expenses/{expense_id}", response_model=ExpenseResponse)
 def get_expense(expense_id: int, session: Session = Depends(get_session)):
     """Return a single expense by its ID."""

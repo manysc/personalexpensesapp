@@ -33,6 +33,12 @@ interface ChartRow {
   [category: string]: number | string;
 }
 
+interface PropertySummaryItem {
+  month: string;
+  property: string;
+  total: number;
+}
+
 // Distinct colours for up to 20 categories
 const PALETTE = [
   "#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f",
@@ -80,6 +86,8 @@ export default function ChartsPage() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [comments, setComments] = useState<CommentedExpense[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
+  const [propertyData, setPropertyData] = useState<PropertySummaryItem[]>([]);
+  const [propertyLoading, setPropertyLoading] = useState(true);
 
   // All categories available from the full data set
   const allCategories = Array.from(new Set(data.map((d) => d.category))).sort();
@@ -121,6 +129,15 @@ export default function ChartsPage() {
       .then((json) => { if (!cancelled) { setComments(json); setCommentsLoading(false); } })
       .catch(() => { if (!cancelled) setCommentsLoading(false); });
 
+    setPropertyLoading(true);
+    fetch(`/api/expenses/property-summary?${params.toString()}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+        return res.json() as Promise<PropertySummaryItem[]>;
+      })
+      .then((json) => { if (!cancelled) { setPropertyData(json); setPropertyLoading(false); } })
+      .catch(() => { if (!cancelled) setPropertyLoading(false); });
+
     return () => { cancelled = true; };
   }, [appliedFrom, appliedTo]);
 
@@ -130,6 +147,38 @@ export default function ChartsPage() {
       : data.filter((d) => selectedCategories.includes(d.category));
 
   const { rows, categories } = pivot(filteredData);
+
+  // Property chart pivot
+  const propertyMonthMap = new Map<string, ChartRow>();
+  const propertySet = new Set<string>();
+  for (const item of propertyData) {
+    propertySet.add(item.property);
+    if (!propertyMonthMap.has(item.month)) propertyMonthMap.set(item.month, { month: item.month });
+    const row = propertyMonthMap.get(item.month)!;
+    row[item.property] = (row[item.property] as number | undefined ?? 0) + item.total;
+  }
+  const propertyRows = Array.from(propertyMonthMap.values()).sort((a, b) =>
+    (a.month as string).localeCompare(b.month as string)
+  );
+  const propertyNames = Array.from(propertySet).sort();
+
+  // Property summary table
+  const propTableMonths = Array.from(new Set(propertyData.map((d) => d.month))).sort();
+  const propTableProperties = Array.from(new Set(propertyData.map((d) => d.property))).sort();
+  const propLookup: Record<string, Record<string, number>> = {};
+  for (const item of propertyData) {
+    if (!propLookup[item.month]) propLookup[item.month] = {};
+    propLookup[item.month][item.property] = item.total;
+  }
+  const propColTotals: Record<string, number> = {};
+  for (const prop of propTableProperties) {
+    propColTotals[prop] = propTableMonths.reduce((s, m) => s + (propLookup[m]?.[prop] ?? 0), 0);
+  }
+  const propRowTotals: Record<string, number> = {};
+  for (const m of propTableMonths) {
+    propRowTotals[m] = propTableProperties.reduce((s, p) => s + (propLookup[m]?.[p] ?? 0), 0);
+  }
+  const propGrandTotal = propTableMonths.reduce((s, m) => s + propRowTotals[m], 0);
 
   // Summary table — uses full (unfiltered) data so category selection doesn't affect it
   const tableMonths = Array.from(new Set(data.map((d) => d.month))).sort();
@@ -379,6 +428,107 @@ export default function ChartsPage() {
                     grandNet >= 0 ? "text-green-700" : "text-red-600"
                   }`}>
                     {fmt(grandNet)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Property chart */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="mb-4 text-base font-semibold text-gray-800">Expenses by Property</h2>
+        {propertyLoading ? (
+          <div className="flex justify-center py-10 text-sm text-gray-500">Loading…</div>
+        ) : propertyRows.length === 0 ? (
+          <div className="flex justify-center py-10 text-sm text-gray-500">No property data available.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={360}>
+            <BarChart data={propertyRows} margin={{ top: 8, right: 24, left: 16, bottom: 80 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="month"
+                tick={{ fontSize: 12 }}
+                angle={-45}
+                textAnchor="end"
+                interval={0}
+              />
+              <YAxis
+                tickFormatter={(v: number) =>
+                  v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v}`
+                }
+                tick={{ fontSize: 12 }}
+              />
+              <Tooltip
+                formatter={(value: number, name: string) => [`$${value.toFixed(2)}`, name]}
+              />
+              <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: 16 }} />
+              {propertyNames.map((prop, i) => (
+                <Bar
+                  key={prop}
+                  dataKey={prop}
+                  stackId="p"
+                  fill={PALETTE[(i + 5) % PALETTE.length]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Property summary table */}
+      {!propertyLoading && propTableMonths.length > 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <h2 className="px-6 pt-5 pb-3 text-base font-semibold text-gray-800">Monthly Property Summary</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-y border-gray-200">
+                  <th className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-left font-semibold text-gray-600">Month</th>
+                  {propTableProperties.map((prop) => (
+                    <th key={prop} className="px-4 py-2 text-right font-semibold text-gray-600 whitespace-nowrap">{prop}</th>
+                  ))}
+                  <th className="px-4 py-2 text-right font-semibold text-gray-900 whitespace-nowrap border-l border-gray-200">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {propTableMonths.map((month) => {
+                  const rowTotal = propRowTotals[month];
+                  const isRowPositive = rowTotal < 0;
+                  return (
+                    <tr key={month} className="hover:bg-gray-50">
+                      <td className="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-2 font-medium text-gray-700 whitespace-nowrap">{month}</td>
+                      {propTableProperties.map((prop) => {
+                        const v = propLookup[month]?.[prop];
+                        const isPositive = v !== undefined && v < 0;
+                        return (
+                          <td key={prop} className={`px-4 py-2 text-right whitespace-nowrap tabular-nums ${isPositive ? "text-green-700" : "text-gray-700"}`}>
+                            {v !== undefined ? fmt(isPositive ? -v : v) : ""}
+                          </td>
+                        );
+                      })}
+                      <td className={`px-4 py-2 text-right font-semibold whitespace-nowrap tabular-nums border-l border-gray-200 ${isRowPositive ? "text-green-700" : "text-red-600"}`}>
+                        {fmt(isRowPositive ? -rowTotal : rowTotal)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
+                  <td className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-gray-700">Total</td>
+                  {propTableProperties.map((prop) => {
+                    const v = propColTotals[prop] ?? 0;
+                    const isPositive = v < 0;
+                    return (
+                      <td key={prop} className={`px-4 py-2 text-right whitespace-nowrap tabular-nums ${isPositive ? "text-green-700" : "text-gray-800"}`}>
+                        {fmt(isPositive ? -v : v)}
+                      </td>
+                    );
+                  })}
+                  <td className={`px-4 py-2 text-right whitespace-nowrap tabular-nums border-l border-gray-200 ${propGrandTotal < 0 ? "text-green-700" : "text-red-600"}`}>
+                    {fmt(propGrandTotal < 0 ? -propGrandTotal : propGrandTotal)}
                   </td>
                 </tr>
               </tfoot>
