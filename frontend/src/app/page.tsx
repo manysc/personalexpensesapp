@@ -153,15 +153,16 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-gray-900">Expenses</h1>
         <button
           onClick={() => setShowAddModal(true)}
           className="shrink-0 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
-          Add expense
+          + Add expense
         </button>
       </div>
+      <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
