@@ -247,8 +247,15 @@ export default function ChartsPage() {
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-gray-900">Expenses by Month &amp; Category</h1>
 
+      {/* Print-only date range */}
+      {(appliedFrom || appliedTo) && (
+        <p className="hidden print:block text-sm text-gray-500 -mt-2">
+          Period: {appliedFrom || "start"} &mdash; {appliedTo || "present"}
+        </p>
+      )}
+
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="print:hidden flex flex-wrap items-end gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-600">From</label>
           <input
@@ -279,11 +286,20 @@ export default function ChartsPage() {
         >
           Reset
         </button>
+        <button
+          onClick={() => window.print()}
+          className="rounded border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 ml-auto flex items-center gap-1.5"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+          </svg>
+          Export PDF
+        </button>
       </div>
 
       {/* Category filter */}
       {allCategories.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="print:hidden rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-600">
               Filter categories
@@ -323,7 +339,7 @@ export default function ChartsPage() {
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+        <div className="print:hidden rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
           {error}
         </div>
       )}
@@ -333,7 +349,7 @@ export default function ChartsPage() {
       ) : rows.length === 0 ? (
         <div className="flex justify-center py-16 text-sm text-gray-500">No data available.</div>
       ) : (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <ResponsiveContainer width="100%" height={480}>
             <BarChart data={rows} margin={{ top: 8, right: 24, left: 16, bottom: 80 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -375,7 +391,7 @@ export default function ChartsPage() {
 
       {/* Summary table */}
       {!loading && tableMonths.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
           <h2 className="px-6 pt-5 pb-3 text-base font-semibold text-gray-800">Monthly Summary</h2>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -437,7 +453,7 @@ export default function ChartsPage() {
       )}
 
       {/* Property chart */}
-      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-base font-semibold text-gray-800">Expenses by Property</h2>
         {propertyLoading ? (
           <div className="flex justify-center py-10 text-sm text-gray-500">Loading…</div>
@@ -479,7 +495,7 @@ export default function ChartsPage() {
 
       {/* Property summary table */}
       {!propertyLoading && propTableMonths.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
           <h2 className="px-6 pt-5 pb-3 text-base font-semibold text-gray-800">Monthly Property Summary</h2>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -538,7 +554,7 @@ export default function ChartsPage() {
       )}
 
       {/* Comments section */}
-      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-base font-semibold text-gray-800">Expense Comments</h2>
         {commentsLoading ? (
           <p className="text-sm text-gray-500">Loading…</p>
