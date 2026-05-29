@@ -350,8 +350,24 @@ export default function ChartsPage() {
         <div className="flex justify-center py-16 text-sm text-gray-500">No data available.</div>
       ) : (
         <div className="break-inside-avoid rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <p className="mb-3 text-xs text-gray-400 print:hidden">Click a bar to filter by that month</p>
           <ResponsiveContainer width="100%" height={480}>
-            <BarChart data={rows} margin={{ top: 8, right: 24, left: 16, bottom: 80 }}>
+            <BarChart
+              data={rows}
+              margin={{ top: 8, right: 24, left: 16, bottom: 80 }}
+              style={{ cursor: "pointer" }}
+              onClick={(chartData: { activeLabel?: string }) => {
+                if (!chartData?.activeLabel) return;
+                const month = chartData.activeLabel;
+                const [year, mon] = month.split("-").map(Number);
+                const firstDay = `${month}-01`;
+                const lastDay = new Date(year, mon, 0).toISOString().split("T")[0];
+                setDateFrom(firstDay);
+                setDateTo(lastDay);
+                setAppliedFrom(firstDay);
+                setAppliedTo(lastDay);
+              }}
+            >
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="month"
