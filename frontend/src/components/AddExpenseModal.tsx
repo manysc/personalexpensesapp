@@ -29,6 +29,10 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
+
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,6 +48,20 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
 
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === backdropRef.current) onClose();
+  }
+
+  function handleReceiptChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setReceiptFile(file);
+    if (receiptPreview) URL.revokeObjectURL(receiptPreview);
+    setReceiptPreview(file && file.type.startsWith("image/") ? URL.createObjectURL(file) : null);
+  }
+
+  function handleReceiptClear() {
+    setReceiptFile(null);
+    if (receiptPreview) URL.revokeObjectURL(receiptPreview);
+    setReceiptPreview(null);
+    if (receiptInputRef.current) receiptInputRef.current.value = "";
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -75,7 +93,17 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
         throw new Error(data?.detail ?? `Error ${res.status}: ${res.statusText}`);
       }
       const created: Expense = await res.json();
-      onSuccess(created);
+      let finalExpense = created;
+      if (receiptFile) {
+        const formData = new FormData();
+        formData.append("receipt", receiptFile);
+        const uploadRes = await fetch(`/api/expenses/${created.id}/receipt`, {
+          method: "POST",
+          body: formData,
+        });
+        if (uploadRes.ok) finalExpense = await uploadRes.json();
+      }
+      onSuccess(finalExpense);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create expense");
     } finally {
@@ -225,9 +253,61 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
                 disabled={saving}
               />
             </div>
+            {/* Receipt */}
+            <div className="col-span-2 flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Receipt (optional)</label>
+              {receiptFile ? (
+                <div className="flex items-center gap-3 rounded border border-gray-200 bg-gray-50 px-3 py-2">
+                  {receiptPreview ? (
+                    <img src={receiptPreview} alt="preview" className="h-10 w-10 rounded object-cover shrink-0" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-8 w-8 shrink-0 text-gray-400" aria-hidden="true">
+                      <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h6.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 1 .439 1.061V12.5A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-9Z" />
+                    </svg>
+                  )}
+                  <span className="flex-1 truncate text-sm text-gray-700" title={receiptFile.name}>
+                    {receiptFile.name}
+                  </span>
+                  {receiptPreview && (
+                    <a
+                      href={receiptPreview}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-xs text-blue-600 hover:underline"
+                    >
+                      View
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleReceiptClear}
+                    disabled={saving}
+                    aria-label="Remove receipt"
+                    className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 disabled:opacity-50"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <label className="flex cursor-pointer items-center gap-2 rounded border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden="true">
+                    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z" />
+                  </svg>
+                  Attach receipt
+                  <input
+                    ref={receiptInputRef}
+                    type="file"
+                    className="hidden"
+                    accept="image/*,.pdf"
+                    onChange={handleReceiptChange}
+                    disabled={saving}
+                  />
+                </label>
+              )}
+            </div>
           </div>
-
-          {/* Footer */}
           <div className="flex items-center justify-end gap-3 px-6 py-4">
             {error && <p className="mr-auto text-sm text-red-600">{error}</p>}
             <button
