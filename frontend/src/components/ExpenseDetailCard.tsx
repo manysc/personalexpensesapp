@@ -39,6 +39,11 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Receipt
+  const [receiptFilename, setReceiptFilename] = useState<string | null>(expense.receipt_filename ?? null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+
   // Options loaded once when entering edit mode
   const [categories, setCategories] = useState<string[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
@@ -115,6 +120,44 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleReceiptUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingReceipt(true);
+    setReceiptError(null);
+    try {
+      const formData = new FormData();
+      formData.append("receipt", file);
+      const res = await fetch(`/api/expenses/${expense.id}/receipt`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
+      const updated: Expense = await res.json();
+      setReceiptFilename(updated.receipt_filename ?? null);
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : "Failed to upload receipt");
+    } finally {
+      setUploadingReceipt(false);
+      e.target.value = "";
+    }
+  }
+
+  async function handleReceiptDelete() {
+    if (!window.confirm("Remove the receipt? This cannot be undone.")) return;
+    setUploadingReceipt(true);
+    setReceiptError(null);
+    try {
+      const res = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) throw new Error(`Error ${res.status}: ${res.statusText}`);
+      setReceiptFilename(null);
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : "Failed to remove receipt");
+    } finally {
+      setUploadingReceipt(false);
     }
   }
 
@@ -276,6 +319,72 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
               <span className="text-sm text-gray-900 whitespace-pre-wrap">
                 {comments || "—"}
               </span>
+            )}
+          </dd>
+        </div>
+
+        {/* Receipt */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-start">
+          <dt className="text-sm font-medium text-gray-500">Receipt</dt>
+          <dd className="col-span-2">
+            {receiptFilename ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm text-gray-900 break-all">
+                  {receiptFilename.replace(/^\d+_/, "")}
+                </span>
+                <a
+                  href={`/api/expenses/${expense.id}/receipt?inline=true`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  View
+                </a>
+                <a
+                  href={`/api/expenses/${expense.id}/receipt`}
+                  download
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  Download
+                </a>
+                <label className="cursor-pointer text-sm text-gray-600 hover:underline disabled:opacity-50">
+                  Replace
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept="image/*,.pdf"
+                    onChange={handleReceiptUpload}
+                    disabled={uploadingReceipt}
+                  />
+                </label>
+                <button
+                  onClick={handleReceiptDelete}
+                  disabled={uploadingReceipt}
+                  className="text-sm text-red-600 hover:underline disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400">No receipt</span>
+                <label className="cursor-pointer text-sm text-blue-600 hover:underline">
+                  Upload
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept="image/*,.pdf"
+                    onChange={handleReceiptUpload}
+                    disabled={uploadingReceipt}
+                  />
+                </label>
+              </div>
+            )}
+            {uploadingReceipt && (
+              <p className="mt-1 text-xs text-gray-500">Uploading…</p>
+            )}
+            {receiptError && (
+              <p className="mt-1 text-xs text-red-600">{receiptError}</p>
             )}
           </dd>
         </div>
