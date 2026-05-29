@@ -99,6 +99,7 @@ export default function ExpensesTable({
                 { label: "Property", align: "left" },
                 { label: "Vehicle", align: "left" },
                 { label: "Comments", align: "left" },
+                { label: "Receipt", align: "left" },
                 { label: "Edited", align: "left" },
               ].map(({ label, align }) => (
                 <th
@@ -187,6 +188,24 @@ export default function ExpensesTable({
                       </span>
                     ) : (
                       <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    {expense.receipt_filename ? (
+                      <a
+                        href={`/api/expenses/${expense.id}/receipt?inline=true`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={expense.receipt_filename.replace(/^\d+_/, "")}
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h6.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 1 .439 1.061V12.5A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-9Z" />
+                        </svg>
+                        View
+                      </a>
+                    ) : (
+                      <span className="text-gray-300">—</span>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
