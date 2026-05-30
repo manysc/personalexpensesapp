@@ -23,10 +23,16 @@ export default function RootLayout({
               Personal Expenses
             </Link>
             <Link
-              href="/charts"
+              href="/expenses"
               className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
             >
-              Charts
+              Expenses
+            </Link>
+            <Link
+              href="/"
+              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
+            >
+              Dashboard
             </Link>
             <Link
               href="/rentals"
