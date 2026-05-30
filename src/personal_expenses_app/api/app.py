@@ -1,21 +1,33 @@
+import contextlib
+import io
 import math
 import json
 import os
+import queue
 import re
+import threading
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.exc import IntegrityError
 
-from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED_CATEGORIES
+from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED_CATEGORIES, RuleBasedExpenseCategorizer
+from personal_expenses_app.core.summarizer import Summarizer
+from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFileLoader
+from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
+from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
+from personal_expenses_app.infrastructure.expense_db_persistence import ExpenseDbPersistence
+from personal_expenses_app.infrastructure.wellsfargo_file_loader import WellsfargoFileLoader
+from personal_expenses_app.interface.user_interaction import UserInteraction
 
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
@@ -1196,4 +1208,132 @@ def delete_vehicle_service(
         raise HTTPException(status_code=404, detail=f"Service {service_id} not found for vehicle {vehicle_id}.")
     session.delete(row)
     session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline endpoint
+# ---------------------------------------------------------------------------
+
+_PIPELINE_MONTH_ORDER = [
+    "jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec",
+]
+
+
+class PipelineRunRequest(BaseModel):
+    year: str
+    citi_months: list[str] = []
+    wellsfargo_months: list[str] = []
+    chase_months: list[str] = []
+    banamex_months: list[str] = []
+
+
+@app.post("/pipeline/run")
+def run_pipeline(body: PipelineRunRequest):
+    q: queue.Queue = queue.Queue()
+
+    class _QueueWriter(io.TextIOBase):
+        def write(self, s: str) -> int:
+            if s:
+                q.put(s)
+            return len(s)
+
+        def flush(self) -> None:
+            pass
+
+    def _execute() -> None:
+        year = body.year
+        citi_m = set(body.citi_months)
+        wf_m = set(body.wellsfargo_months)
+        chase_m = set(body.chase_months)
+        banamex_m = set(body.banamex_months)
+
+        citi_dir = _project_root / "resources" / "citi" / year
+        wf_dir = _project_root / "resources" / "wellsfargo" / year
+        chase_dir = _project_root / "resources" / "chase" / year
+        banamex_dir = _project_root / "resources" / "banamex" / year
+
+        citi_loader = CitiFileLoader()
+        wf_loader = WellsfargoFileLoader()
+        chase_loader = ChaseFileLoader()
+        banamex_loader = BanamexFileLoader()
+        categorizer = RuleBasedExpenseCategorizer()
+        db = ExpenseDbPersistence()
+        summarizer = Summarizer()
+        user = UserInteraction()
+
+        active_months = [
+            m for m in _PIPELINE_MONTH_ORDER
+            if m in citi_m or m in wf_m or m in chase_m or m in banamex_m
+        ]
+        all_labeled: list = []
+
+        for month in active_months:
+            print(f"\nProcessing {month} {year}...")
+            dfs = []
+            if month in citi_m:
+                path = str(citi_dir / f"citi-{month}-{year}.pdf")
+                df = citi_loader.load_expenses_and_credits(path)
+                if df is not None and not df.empty:
+                    dfs.append(df)
+            if month in wf_m:
+                path = str(wf_dir / f"wellsfargo-{month}-{year}.pdf")
+                df = wf_loader.load_expenses_and_credits(path)
+                if df is not None and not df.empty:
+                    dfs.append(df)
+            if month in chase_m:
+                path = str(chase_dir / f"chase-{month}-{year}.pdf")
+                df = chase_loader.load_expenses_and_credits(path)
+                if df is not None and not df.empty:
+                    dfs.append(df)
+            if month in banamex_m:
+                path = str(banamex_dir / f"banamex-{month}-{year}.pdf")
+                df = banamex_loader.load_expenses_and_credits(path)
+                if df is not None and not df.empty:
+                    dfs.append(df)
+
+            if not dfs:
+                print(f"No data loaded for {month} {year}")
+                continue
+
+            combined = pd.concat(dfs, ignore_index=True)
+            labeled = categorizer.categorize_expenses(combined)
+            db.save_expenses(labeled)
+            all_labeled.append(labeled)
+
+        if all_labeled:
+            combined_all = pd.concat(all_labeled, ignore_index=True).drop_duplicates()
+            for (year_val, month_val), group in combined_all.groupby(
+                [combined_all["Date"].dt.year, combined_all["Date"].dt.month]
+            ):
+                summary = summarizer.summarize_by_category(group)
+                summary["Month"] = pd.Timestamp(
+                    year=int(year_val), month=int(month_val), day=1
+                ).strftime("%b")
+                summary["Year"] = str(year_val)
+                user.print_summary(summary)
+                user.print_total(summary)
+        else:
+            print("No expenses loaded. Check that the selected PDF files exist.")
+
+    def _run() -> None:
+        try:
+            writer = _QueueWriter()
+            with contextlib.redirect_stdout(writer):
+                _execute()
+        except Exception as exc:
+            q.put(f"\nERROR: {exc}\n")
+        finally:
+            q.put(None)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    def _generate():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield item
+
+    return StreamingResponse(_generate(), media_type="text/plain; charset=utf-8")
 
