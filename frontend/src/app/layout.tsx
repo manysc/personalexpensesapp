@@ -1,9 +1,10 @@
+import NavLinks from "@/components/NavLinks";
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Personal Expenses",
+  title: "Expenses Assistant",
   description: "Browse and filter your personal expense records",
 };
 
@@ -20,38 +21,9 @@ export default function RootLayout({
               href="/"
               className="text-lg font-semibold text-gray-900 hover:text-blue-600 transition-colors"
             >
-              Personal Expenses
+              Expenses Assistant
             </Link>
-            <Link
-              href="/expenses"
-              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-            >
-              Expenses
-            </Link>
-            <Link
-              href="/"
-              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/rentals"
-              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-            >
-              Rentals
-            </Link>
-            <Link
-              href="/vehicles"
-              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-            >
-              Vehicles
-            </Link>
-            <Link
-              href="/categories"
-              className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-            >
-              Categories
-            </Link>
+            <NavLinks />
           </div>
           </div>
         </header>
