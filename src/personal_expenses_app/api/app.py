@@ -1337,3 +1337,57 @@ def run_pipeline(body: PipelineRunRequest):
 
     return StreamingResponse(_generate(), media_type="text/plain; charset=utf-8")
 
+
+# ---------------------------------------------------------------------------
+# Statements endpoints (list / upload / download)
+# ---------------------------------------------------------------------------
+
+_VALID_BANKS: set[str] = {"citi", "wellsfargo", "chase", "banamex"}
+_VALID_MONTHS_SET: set[str] = set(_PIPELINE_MONTH_ORDER)
+
+
+@app.get("/statements/{bank}/{year}", response_model=list[str])
+def list_statements(bank: str, year: str):
+    """Return the months that have a statement PDF for the given bank and year."""
+    if bank not in _VALID_BANKS:
+        raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
+    stmts_dir = _project_root / "resources" / bank / year
+    if not stmts_dir.exists():
+        return []
+    return [
+        month for month in _PIPELINE_MONTH_ORDER
+        if (stmts_dir / f"{bank}-{month}-{year}.pdf").exists()
+    ]
+
+
+@app.post("/statements/{bank}/{year}/{month}", status_code=200)
+async def upload_statement(bank: str, year: str, month: str, file: UploadFile = File(...)):
+    """Upload a statement PDF for the given bank, year, and month."""
+    if bank not in _VALID_BANKS:
+        raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
+    if month not in _VALID_MONTHS_SET:
+        raise HTTPException(status_code=400, detail=f"Unknown month: {month}")
+    if not re.match(r"^\d{4}$", year):
+        raise HTTPException(status_code=400, detail=f"Invalid year: {year}")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    stmts_dir = _project_root / "resources" / bank / year
+    stmts_dir.mkdir(parents=True, exist_ok=True)
+    dest = stmts_dir / f"{bank}-{month}-{year}.pdf"
+    content = await file.read()
+    dest.write_bytes(content)
+    return {"uploaded": True}
+
+
+@app.get("/statements/{bank}/{year}/{month}")
+def download_statement(bank: str, year: str, month: str):
+    """Download a statement PDF for the given bank, year, and month."""
+    if bank not in _VALID_BANKS:
+        raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
+    if month not in _VALID_MONTHS_SET:
+        raise HTTPException(status_code=400, detail=f"Unknown month: {month}")
+    path = _project_root / "resources" / bank / year / f"{bank}-{month}-{year}.pdf"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Statement not found")
+    return FileResponse(str(path), media_type="application/pdf", filename=f"{bank}-{month}-{year}.pdf")
+
