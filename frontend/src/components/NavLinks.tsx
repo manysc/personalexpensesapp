@@ -9,6 +9,7 @@ const links = [
   { href: "/rentals", label: "Rentals", exact: false },
   { href: "/vehicles", label: "Vehicles", exact: false },
   { href: "/categories", label: "Categories", exact: false },
+  { href: "/import", label: "Import", exact: false },
 ];
 
 export default function NavLinks() {
