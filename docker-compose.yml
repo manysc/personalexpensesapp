@@ -8,6 +8,10 @@ services:
     environment:
       # Points to the FastAPI service defined below
       API_URL: http://backend:8000
+      # Ollama base URL and model for the AI chat assistant
+      # On Docker Desktop (Windows/Mac), host.docker.internal resolves to the host machine
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
     depends_on:
       - backend
 
