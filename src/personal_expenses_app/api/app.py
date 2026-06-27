@@ -355,15 +355,17 @@ class CategoryResponse(BaseModel):
     id: int
     name: str
     keywords: list[str]
+    updated_expenses: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_row(cls, row: "_Category") -> "CategoryResponse":
+    def from_orm_row(cls, row: "_Category", updated_expenses: Optional[int] = None) -> "CategoryResponse":
         return cls(  # type: ignore[call-arg]
             id=row.id,
             name=row.name,
             keywords=json.loads(row.keywords or "[]"),  # type: ignore[arg-type]
+            updated_expenses=updated_expenses,
         )
 
 
@@ -891,11 +893,13 @@ def update_category(
     body: CategoryRequest,
     session: Session = Depends(get_session),
 ):
-    """Update an existing category."""
+    """Update an existing category and re-categorize matching non-overridden expenses."""
     row = session.get(_Category, category_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Category {category_id} not found.")
-    row.name = body.name.strip()
+    old_name = str(row.name)  # type: ignore[arg-type]
+    new_name = body.name.strip()
+    row.name = new_name
     row.keywords = json.dumps(body.keywords)
     try:
         session.commit()
@@ -903,7 +907,30 @@ def update_category(
         session.rollback()
         raise HTTPException(status_code=409, detail=f"Category '{body.name}' already exists.")
     session.refresh(row)
-    return CategoryResponse.from_orm_row(row)
+
+    total_updated = 0
+
+    # If renamed, propagate new name to non-overridden expenses that had the old name
+    if old_name != new_name:
+        result = session.execute(
+            text("UPDATE all_expenses SET category = :new WHERE category = :old AND overridden = false"),
+            {"new": new_name, "old": old_name},
+        )
+        total_updated += result.rowcount  # type: ignore[attr-defined]
+
+    # Re-apply keywords: update non-overridden expenses matching any keyword
+    if body.keywords:
+        conditions = " OR ".join(f"description ILIKE :kw{i}" for i in range(len(body.keywords)))
+        params: dict = {"cat": new_name}
+        params.update({f"kw{i}": f"%{kw}%" for i, kw in enumerate(body.keywords)})
+        result = session.execute(
+            text(f"UPDATE all_expenses SET category = :cat WHERE overridden = false AND ({conditions})"),
+            params,
+        )
+        total_updated += result.rowcount  # type: ignore[attr-defined]
+
+    session.commit()
+    return CategoryResponse.from_orm_row(row, updated_expenses=total_updated)
 
 
 @app.delete("/categories/{category_id}", status_code=204)

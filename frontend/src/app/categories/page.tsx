@@ -88,8 +88,12 @@ export default function CategoriesPage() {
         const data = await res.json().catch(() => ({}));
         throw new Error((data as { detail?: string }).detail ?? `Error ${res.status}`);
       }
+      const saved = (await res.json()) as Category;
       closeForm();
       loadCategories();
+      if (editing && saved.updated_expenses != null) {
+        setSeedResult(`Category saved. ${saved.updated_expenses} expense(s) re-categorized.`);
+      }
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Failed to save category");
     } finally {
