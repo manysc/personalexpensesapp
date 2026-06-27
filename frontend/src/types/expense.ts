@@ -53,6 +53,7 @@ export interface Category {
   id: number;
   name: string;
   keywords: string[];
+  updated_expenses?: number;
 }
 
 export interface Vehicle {
