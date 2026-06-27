@@ -1044,6 +1044,49 @@ def update_rental_property(
     return RentalPropertyResponse.model_validate(row)
 
 
+class SyncExpensesResponse(BaseModel):
+    updated: int
+
+
+@app.post("/rental-properties/{property_id}/sync-expenses", response_model=SyncExpensesResponse)
+def sync_expenses_by_tenant(
+    property_id: int,
+    session: Session = Depends(get_session),
+):
+    """Find expenses whose description contains any keyword from the tenant name and assign this property to them.
+
+    The tenant string is split on whitespace and '&'; each token of 2+ characters
+    is matched case-insensitively against the expense description (OR logic).
+    """
+    prop = session.get(_RentalProperty, property_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
+    if not prop.tenant:
+        return SyncExpensesResponse(updated=0)
+
+    import re
+    from sqlalchemy import func, or_, update as sa_update
+
+    # Split on whitespace and '&', keep only tokens with 2+ characters
+    keywords = [t.lower() for t in re.split(r"[\s&]+", prop.tenant.strip()) if len(t) >= 2]
+    if not keywords:
+        return SyncExpensesResponse(updated=0)
+
+    conditions = [
+        func.lower(_AllExpense.description).contains(kw)
+        for kw in keywords
+    ]
+    stmt = (
+        sa_update(_AllExpense)
+        .where(or_(*conditions))
+        .values(property_id=property_id)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = session.execute(stmt)
+    session.commit()
+    return SyncExpensesResponse(updated=result.rowcount)
+
+
 @app.delete("/rental-properties/{property_id}", status_code=204)
 def delete_rental_property(
     property_id: int,

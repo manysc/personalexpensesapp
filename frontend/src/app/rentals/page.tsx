@@ -17,6 +17,7 @@ export default function RentalPropertiesPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   function loadProperties() {
     setLoading(true);
@@ -69,6 +70,7 @@ export default function RentalPropertiesPage() {
     }
     setSaving(true);
     setFormError(null);
+    const previousTenant = editing?.tenant ?? null;
     try {
       const payload: RentalPropertyRequest = {
         alias: form.alias.trim(),
@@ -90,6 +92,22 @@ export default function RentalPropertiesPage() {
         const data = await res.json().catch(() => ({}));
         throw new Error((data as { detail?: string }).detail ?? `Error ${res.status}`);
       }
+      const saved: RentalProperty = await res.json();
+
+      // After a PUT where the tenant changed (or a new tenant was set), sync expenses
+      const tenantChanged = editing !== null && payload.tenant && payload.tenant !== previousTenant;
+      if (tenantChanged) {
+        try {
+          const syncRes = await fetch(`/api/rental-properties/${saved.id}/sync-expenses`, { method: "POST" });
+          if (syncRes.ok) {
+            const syncData = await syncRes.json() as { updated: number };
+            setSyncMessage(`${syncData.updated} expense${syncData.updated === 1 ? "" : "s"} linked to "${saved.alias}".`);
+          }
+        } catch {
+          // sync failure is non-fatal
+        }
+      }
+
       closeForm();
       loadProperties();
     } catch (err: unknown) {
@@ -128,6 +146,13 @@ export default function RentalPropertiesPage() {
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {syncMessage && (
+        <div className="rounded-md bg-green-50 border border-green-200 p-4 text-sm text-green-700 flex items-center justify-between">
+          <span>{syncMessage}</span>
+          <button onClick={() => setSyncMessage(null)} className="ml-4 text-green-500 hover:text-green-700 font-medium">✕</button>
         </div>
       )}
 
