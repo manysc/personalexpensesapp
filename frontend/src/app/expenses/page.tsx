@@ -51,6 +51,18 @@ export default function ExpensesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Restore scroll position when returning from an expense detail page
+  useEffect(() => {
+    if (!loading && data) {
+      const saved = sessionStorage.getItem("expenses-scroll");
+      if (saved !== null) {
+        sessionStorage.removeItem("expenses-scroll");
+        const y = parseInt(saved, 10);
+        requestAnimationFrame(() => window.scrollTo(0, y));
+      }
+    }
+  }, [loading, data]);
+
   useEffect(() => {
     fetch("/api/rental-properties")
       .then((r) => r.json() as Promise<RentalProperty[]>)

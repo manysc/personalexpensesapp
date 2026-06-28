@@ -117,7 +117,10 @@ export default function ExpensesTable({
               return (
                 <tr
                   key={expense.id}
-                  onClick={() => router.push(`/expenses/${expense.id}`)}
+                  onClick={() => {
+                    sessionStorage.setItem("expenses-scroll", String(window.scrollY));
+                    router.push(`/expenses/${expense.id}`);
+                  }}
                   className={`cursor-pointer transition-colors hover:bg-blue-50 ${isSelected ? "bg-blue-50" : ""}`}
                 >
                   {selectable && (
