@@ -113,8 +113,9 @@ class CitiFileLoader:
         
         # Format 1b: Two dates with ONLY amount (no description between dates and amount)
         # Example: 12/09 12/10 $3.00 (description is on previous line)
+        # Also handles trailing Costco reward text: 02/10 02/10 $58.69 2% on Costco...
         match = re.match(
-            r"^(\d{1,2}/\d{1,2})\s+(\d{1,2}/\d{1,2})\s+(-?\$?[\d,]+\.\d{2})\s*$",
+            r"^(\d{1,2}/\d{1,2})\s+(\d{1,2}/\d{1,2})\s+(-?\$?[\d,]+\.\d{2})(?=\s|$)",
             line_stripped,
         )
         if match:
@@ -592,15 +593,16 @@ class CitiFileLoader:
                                     transaction["Description"] = pending_description
                                 pending_description = None
                             else:
-                                # Try to find description in previous lines
-                                # Look back a few lines for a description
-                                for j in range(max(0, i-3), i):
+                                # Try to find description in previous lines (most-recent first)
+                                # Searching newest-to-oldest ensures we find the merchant name
+                                # (e.g. "AMAZON MARK* ZJ9UY2903") rather than the URL line
+                                # from the *prior* transaction (e.g. "WWW.AMAZON.COWA")
+                                for j in range(i - 1, max(-1, i - 4), -1):
                                     prev_line = lines[j].strip()
                                     # Skip MEXICAN PESO lines - they are amounts, not descriptions
                                     if (prev_line and not re.match(r"^\d{1,2}/\d{1,2}", prev_line) 
                                         and len(prev_line) > 5
                                         and "MEXICAN PESO" not in prev_line):
-                                        # This might be the description
                                         transaction["Description"] = prev_line
                                         break
                         else:
