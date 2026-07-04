@@ -92,9 +92,12 @@ class ChaseFileLoader:
                     elif "ELECTRONIC WITHDRAWALS" in line:
                         current_section = "debits"
                         continue
+                    elif "OTHER WITHDRAWALS" in line and not line_stripped.startswith("Total"):
+                        current_section = "debits"
+                        continue
                     elif line_stripped.startswith(
                         "Total Deposits"
-                    ) or line_stripped.startswith("Total Electronic"):
+                    ) or line_stripped.startswith("Total Electronic") or line_stripped.startswith("Total Other Withdrawals"):
                         current_section = None
                         continue
                     elif line_stripped.startswith("*end*") and current_section:
