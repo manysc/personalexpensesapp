@@ -7,6 +7,7 @@ import queue
 import re
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -456,7 +457,8 @@ def list_expenses(
     if date_from is not None:
         stmt = stmt.where(_AllExpense.date >= date_from)
     if date_to is not None:
-        stmt = stmt.where(_AllExpense.date <= date_to)
+        next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        stmt = stmt.where(_AllExpense.date < next_day)
     if description is not None:
         stmt = stmt.where(_AllExpense.description.ilike(f"%{description}%"))
     if comments is not None:
@@ -517,7 +519,8 @@ def expenses_comments(
     if date_from is not None:
         stmt = stmt.where(_AllExpense.date >= date_from)
     if date_to is not None:
-        stmt = stmt.where(_AllExpense.date <= date_to)
+        next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        stmt = stmt.where(_AllExpense.date < next_day)
     stmt = stmt.order_by(_AllExpense.date.asc(), _AllExpense.id.asc())
     rows = session.execute(stmt).scalars().all()
     def _safe(v) -> Optional[float]:
@@ -554,8 +557,9 @@ def expenses_summary(
         conditions.append("date >= :date_from")
         params["date_from"] = date_from
     if date_to is not None:
-        conditions.append("date <= :date_to")
-        params["date_to"] = date_to
+        next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        conditions.append("date < :date_to_exclusive")
+        params["date_to_exclusive"] = next_day
 
     where_clause = " AND ".join(conditions)
     sql = text(f"""
@@ -603,8 +607,9 @@ def expenses_property_summary(
         conditions.append("e.date >= :date_from")
         params["date_from"] = date_from
     if date_to is not None:
-        conditions.append("e.date <= :date_to")
-        params["date_to"] = date_to
+        next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        conditions.append("e.date < :date_to_exclusive")
+        params["date_to_exclusive"] = next_day
 
     where_clause = " AND ".join(conditions)
     sql = text(f"""
