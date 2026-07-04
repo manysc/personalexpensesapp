@@ -22,6 +22,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
   const [vehicleId, setVehicleId] = useState<number | null>(expense.vehicle_id);
   const [comments, setComments] = useState(expense.comments ?? "");
+  const [balancedDate, setBalancedDate] = useState(expense.balanced_date ?? "");
 
   // Draft values (used while editing)
   const [draftCategory, setDraftCategory] = useState(category);
@@ -32,6 +33,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
     expense.vehicle_id != null ? String(expense.vehicle_id) : ""
   );
   const [draftComments, setDraftComments] = useState(comments);
+  const [draftBalancedDate, setDraftBalancedDate] = useState(expense.balanced_date ?? "");
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -70,6 +72,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
     setDraftPropertyId(propertyId != null ? String(propertyId) : "");
     setDraftVehicleId(vehicleId != null ? String(vehicleId) : "");
     setDraftComments(comments);
+    setDraftBalancedDate(balancedDate);
     setError(null);
     setEditing(true);
   }
@@ -102,6 +105,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
         property_id: draftPropertyId ? Number(draftPropertyId) : null,
         vehicle_id: draftVehicleId ? Number(draftVehicleId) : null,
         comments: draftComments || null,
+        balanced_date: draftBalancedDate || null,
       };
       const res = await fetch(`/api/expenses/${expense.id}`, {
         method: "PATCH",
@@ -114,6 +118,7 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       setPropertyId(updated.property_id);
       setVehicleId(updated.vehicle_id);
       setComments(updated.comments ?? "");
+      setBalancedDate(updated.balanced_date ?? "");
       setOverridden(updated.overridden);
       setEditing(false);
     } catch (err) {
@@ -318,6 +323,26 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             ) : (
               <span className="text-sm text-gray-900 whitespace-pre-wrap">
                 {comments || "—"}
+              </span>
+            )}
+          </dd>
+        </div>
+
+        {/* Balanced Date */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+          <dt className="text-sm font-medium text-gray-500">Balanced Date</dt>
+          <dd className="col-span-2">
+            {editing ? (
+              <input
+                type="date"
+                value={draftBalancedDate}
+                onChange={(e) => setDraftBalancedDate(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              />
+            ) : (
+              <span className="text-sm text-gray-900">
+                {balancedDate || "—"}
               </span>
             )}
           </dd>

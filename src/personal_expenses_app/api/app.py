@@ -103,6 +103,7 @@ class _AllExpense(_Base):
     overridden = Column(Boolean, nullable=False, default=False, server_default="false")
     comments = Column(String(2000), nullable=True)
     property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
+    balanced_date = Column(String(10), nullable=True)  # YYYY-MM-DD override for summary grouping
     vehicle_id = Column(Integer, nullable=True)  # FK to vehicles.id
     receipt_filename = Column(String(500), nullable=True)
 
@@ -280,6 +281,19 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'balanced_date' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN balanced_date VARCHAR(10); "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.commit()
 
 
@@ -306,6 +320,7 @@ class ExpenseResponse(BaseModel):
     property_id: Optional[int] = None
     vehicle_id: Optional[int] = None
     receipt_filename: Optional[str] = None
+    balanced_date: Optional[str] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -331,6 +346,7 @@ class ExpenseUpdateRequest(BaseModel):
     comments: Optional[str] = None
     property_id: Optional[int] = None
     vehicle_id: Optional[int] = None
+    balanced_date: Optional[str] = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -349,6 +365,7 @@ class ExpenseCreateRequest(BaseModel):
     category: Optional[str] = None
     comments: Optional[str] = None
     property_id: Optional[int] = None
+    balanced_date: Optional[str] = None
 
 
 class CategoryResponse(BaseModel):
@@ -398,6 +415,7 @@ def create_expense(
         overridden=True,
         comments=body.comments,
         property_id=body.property_id,
+        balanced_date=body.balanced_date,
     )
     session.add(row)
     try:
@@ -542,7 +560,7 @@ def expenses_summary(
     where_clause = " AND ".join(conditions)
     sql = text(f"""
         SELECT
-            substring(date, 1, 7) AS month,
+            substring(COALESCE(balanced_date, date), 1, 7) AS month,
             category,
             SUM(CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END)::float  AS debit_total,
             SUM(CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END)::float AS credit_total
@@ -591,7 +609,7 @@ def expenses_property_summary(
     where_clause = " AND ".join(conditions)
     sql = text(f"""
         SELECT
-            substring(e.date, 1, 7) AS month,
+            substring(COALESCE(e.balanced_date, e.date), 1, 7) AS month,
             p.alias AS property,
             SUM(CASE WHEN e.debit IS NULL OR e.debit = 'NaN'::numeric THEN 0 ELSE e.debit END)::float  AS debit_total,
             SUM(CASE WHEN e.credit IS NULL OR e.credit = 'NaN'::numeric THEN 0 ELSE e.credit END)::float AS credit_total
@@ -666,6 +684,9 @@ def update_expense(
             if veh is None:
                 raise HTTPException(status_code=404, detail=f"Vehicle {body.vehicle_id} not found.")
         row.vehicle_id = body.vehicle_id
+        updated = True
+    if "balanced_date" in body.model_fields_set:
+        row.balanced_date = body.balanced_date
         updated = True
 
     if updated:

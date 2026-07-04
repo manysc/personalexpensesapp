@@ -11,6 +11,7 @@ export interface Expense {
   property_id: number | null;
   vehicle_id: number | null;
   receipt_filename: string | null;
+  balanced_date: string | null;
 }
 
 export interface ExpenseListResponse {

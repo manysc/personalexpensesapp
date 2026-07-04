@@ -22,6 +22,7 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
   const [category, setCategory] = useState("");
   const [propertyId, setPropertyId] = useState("");
   const [comments, setComments] = useState("");
+  const [balancedDate, setBalancedDate] = useState("");
 
   const [categories, setCategories] = useState<string[]>([]);
   const [properties, setProperties] = useState<RentalProperty[]>([]);
@@ -82,6 +83,7 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
         category: category || null,
         property_id: propertyId ? Number(propertyId) : null,
         comments: comments || null,
+        balanced_date: balancedDate || null,
       };
       const res = await fetch("/api/expenses", {
         method: "POST",
@@ -250,6 +252,18 @@ export default function AddExpenseModal({ onClose, onSuccess }: Props) {
                 rows={2}
                 className={inputClass}
                 placeholder="Optional notes…"
+                disabled={saving}
+              />
+            </div>
+
+            {/* Balanced Date */}
+            <div className="col-span-2 flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Balanced Date</label>
+              <input
+                type="date"
+                value={balancedDate}
+                onChange={(e) => setBalancedDate(e.target.value)}
+                className={inputClass}
                 disabled={saving}
               />
             </div>
