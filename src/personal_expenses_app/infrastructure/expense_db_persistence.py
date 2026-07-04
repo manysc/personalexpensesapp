@@ -1,4 +1,5 @@
 import os
+from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
@@ -134,6 +135,24 @@ class ExpenseDbPersistence:
         records = renamed.where(pd.notnull(renamed), None).to_dict(orient="records")
         if not records:
             return
+        # Deduplicate within-batch: if two rows share the same natural key
+        # (date, bank, description, debit, credit), append " (2)", " (3)", ...
+        # so each row gets a distinct key and all occurrences are stored.
+        # NaN != NaN in Python (IEEE 754), so normalise NaN → None before
+        # using values as dict keys to ensure identical rows compare equal.
+        def _norm(v):
+            try:
+                return None if pd.isna(v) else v
+            except (TypeError, ValueError):
+                return v
+
+        seen: dict = defaultdict(int)
+        for record in records:
+            key = (_norm(record["date"]), _norm(record["bank"]), _norm(record["description"]),
+                   _norm(record["debit"]), _norm(record["credit"]))
+            seen[key] += 1
+            if seen[key] > 1:
+                record["description"] = f"{record['description']} ({seen[key]})"
         stmt = pg_insert(_AllExpense)
         upsert_stmt = stmt.on_conflict_do_update(
             constraint="uix_expense_natural_key",
