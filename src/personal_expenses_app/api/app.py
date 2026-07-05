@@ -443,7 +443,7 @@ def list_expenses(
     vehicle_id: Optional[int] = Query(default=None, description="Filter by vehicle ID"),
     overridden_only: bool = Query(default=False, description="If true, return only manually overridden expenses"),
 
-    limit: int = Query(default=100, ge=1, le=1000, description="Max number of results to return"),
+    limit: int = Query(default=100, ge=1, le=10000, description="Max number of results to return"),
     offset: int = Query(default=0, ge=0, description="Number of results to skip"),
     session: Session = Depends(get_session),
 ):
