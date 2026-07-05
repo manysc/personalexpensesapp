@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 interface Props {
   onApply: (filters: ExpenseFilters) => void;
   initialValues?: ExpenseFilters;
+  onExportPdf?: () => void;
+  exporting?: boolean;
 }
 
 const EMPTY: ExpenseFilters = {
@@ -23,7 +25,7 @@ const EMPTY: ExpenseFilters = {
 const inputClass =
   "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
-export default function FilterBar({ onApply, initialValues }: Props) {
+export default function FilterBar({ onApply, initialValues, onExportPdf, exporting }: Props) {
   const [draft, setDraft] = useState<ExpenseFilters>(initialValues ?? EMPTY);
   const [banks, setBanks] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -218,6 +220,26 @@ export default function FilterBar({ onApply, initialValues }: Props) {
         >
           Clear
         </button>
+        {onExportPdf && (
+          <button
+            type="button"
+            onClick={onExportPdf}
+            disabled={exporting}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {exporting ? (
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a1 1 0 001 1h16a1 1 0 001-1v-3" />
+              </svg>
+            )}
+            {exporting ? "Exporting…" : "Export PDF"}
+          </button>
+        )}
         <button
           type="submit"
           className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"

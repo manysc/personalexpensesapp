@@ -5,7 +5,7 @@ import BulkEditBar from "@/components/BulkEditBar";
 import ExpensesTable from "@/components/ExpensesTable";
 import FilterBar from "@/components/FilterBar";
 import Pagination from "@/components/Pagination";
-import type { ExpenseFilters, ExpenseListResponse, RentalProperty, Vehicle } from "@/types/expense";
+import type { Expense, ExpenseFilters, ExpenseListResponse, RentalProperty, Vehicle } from "@/types/expense";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -50,6 +50,7 @@ export default function ExpensesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
+  const [exporting, setExporting] = useState(false);
 
   // Restore scroll position when returning from an expense detail page
   useEffect(() => {
@@ -161,6 +162,96 @@ export default function ExpensesPage() {
     [appliedFilters, pushUrl]
   );
 
+  const handleExportPdf = useCallback(async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (appliedFilters.bank) params.set("bank", appliedFilters.bank);
+      if (appliedFilters.category) params.set("category", appliedFilters.category);
+      if (appliedFilters.date_from) params.set("date_from", appliedFilters.date_from);
+      if (appliedFilters.date_to) params.set("date_to", appliedFilters.date_to);
+      if (appliedFilters.description) params.set("description", appliedFilters.description);
+      if (appliedFilters.comments) params.set("comments", appliedFilters.comments);
+      if (appliedFilters.property_id) params.set("property_id", appliedFilters.property_id);
+      if (appliedFilters.vehicle_id) params.set("vehicle_id", appliedFilters.vehicle_id);
+      if (appliedFilters.overridden_only) params.set("overridden_only", "true");
+      params.set("limit", "10000");
+      params.set("offset", "0");
+
+      const res = await fetch(`/api/expenses?${params.toString()}`);
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const json = (await res.json()) as ExpenseListResponse;
+
+      const { default: jsPDF } = await import("jspdf");
+      const { default: autoTable } = await import("jspdf-autotable");
+
+      const doc = new jsPDF({ orientation: "landscape" });
+
+      const title = "Expenses";
+      const subtitle = [
+        appliedFilters.date_from && `From: ${appliedFilters.date_from}`,
+        appliedFilters.date_to && `To: ${appliedFilters.date_to}`,
+        appliedFilters.bank && `Bank: ${appliedFilters.bank}`,
+        appliedFilters.category && `Category: ${appliedFilters.category}`,
+      ]
+        .filter(Boolean)
+        .join("  |  ");
+
+      doc.setFontSize(14);
+      doc.text(title, 14, 15);
+      if (subtitle) {
+        doc.setFontSize(9);
+        doc.setTextColor(100);
+        doc.text(subtitle, 14, 22);
+        doc.setTextColor(0);
+      }
+
+      const fmt = (v: number | null) =>
+        v === null ? "" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
+
+      autoTable(doc, {
+        startY: subtitle ? 27 : 20,
+        head: [["Date", "Bank", "Description", "Debit", "Credit", "Category", "Property", "Vehicle", "Comments"]],
+        body: (json.items as Expense[]).map((e) => [
+          e.date,
+          e.bank,
+          e.description,
+          fmt(e.debit),
+          fmt(e.credit),
+          e.category ?? "",
+          e.property_id !== null ? (propertyMap[e.property_id] ?? String(e.property_id)) : "",
+          e.vehicle_id !== null ? (vehicleMap[e.vehicle_id] ?? String(e.vehicle_id)) : "",
+          e.comments ?? "",
+        ]),
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [37, 99, 235] },
+        columnStyles: {
+          3: { halign: "right" },
+          4: { halign: "right" },
+        },
+        didDrawPage: (data) => {
+          const pageCount = (doc as unknown as { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages();
+          doc.setFontSize(8);
+          doc.setTextColor(150);
+          doc.text(
+            `Page ${data.pageNumber} of ${pageCount}  •  ${json.total} expenses`,
+            doc.internal.pageSize.getWidth() / 2,
+            doc.internal.pageSize.getHeight() - 8,
+            { align: "center" }
+          );
+          doc.setTextColor(0);
+        },
+      });
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      doc.save(`expenses-${dateStr}.pdf`);
+    } catch (err) {
+      console.error("PDF export failed", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [appliedFilters, propertyMap, vehicleMap]);
+
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
 
   return (
@@ -174,7 +265,7 @@ export default function ExpensesPage() {
           + Add expense
         </button>
       </div>
-      <FilterBar onApply={handleApply} initialValues={filtersFromUrl} />
+      <FilterBar onApply={handleApply} initialValues={filtersFromUrl} onExportPdf={handleExportPdf} exporting={exporting} />
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
