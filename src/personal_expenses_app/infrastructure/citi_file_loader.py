@@ -291,13 +291,14 @@ class CitiFileLoader:
                     # We check peso_match first since it's very specific (must match exact pattern)
                     peso_match = re.match(r"^[\d,]+\.\d+-?\s+MEXICAN\s+PESO\s+(-?\$?[\d,]+\.\d{2})", line_stripped)
                     if peso_match:
-                        if pending_description and not in_payments_section:
+                        if pending_description:
                             # We have a pending description and found its amount
                             amount_str = peso_match.group(1)
                             amount = float(amount_str.replace(",", "").replace("$", ""))
                             
                             # Extract date and description from pending line
-                            desc_match = re.match(r"^(\d{1,2}/\d{1,2})\s+(.*)", pending_description)
+                            # Handle both single-date and two-date formats
+                            desc_match = re.match(r"^(\d{1,2}/\d{1,2})\s+(?:\d{1,2}/\d{1,2}\s+)?(.*)", pending_description)
                             if desc_match:
                                 transaction_date = desc_match.group(1)
                                 description = desc_match.group(2).strip()
