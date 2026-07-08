@@ -16,7 +16,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.exc import IntegrityError
@@ -107,6 +107,8 @@ class _AllExpense(_Base):
     balanced_date = Column(String(10), nullable=True)  # YYYY-MM-DD override for summary grouping
     vehicle_id = Column(Integer, nullable=True)  # FK to vehicles.id
     receipt_filename = Column(String(500), nullable=True)
+    amortize_months = Column(Integer, nullable=True)  # spread this expense's amount across N months in summaries
+    amortize_start_date = Column(String(10), nullable=True)  # YYYY-MM-DD start month for amortization
 
 
 class _Category(_Base):
@@ -295,6 +297,32 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'amortize_months' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN amortize_months INTEGER; "
+                "  END IF; "
+                "END $$;"
+            )
+        )
+        conn.execute(
+            text(
+                "DO $$ BEGIN "
+                "  IF NOT EXISTS ( "
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_name = 'all_expenses' AND column_name = 'amortize_start_date' "
+                "  ) THEN "
+                "    ALTER TABLE all_expenses "
+                "    ADD COLUMN amortize_start_date VARCHAR(10); "
+                "  END IF; "
+                "END $$;"
+            )
+        )
         conn.commit()
 
 
@@ -322,6 +350,8 @@ class ExpenseResponse(BaseModel):
     vehicle_id: Optional[int] = None
     receipt_filename: Optional[str] = None
     balanced_date: Optional[str] = None
+    amortize_months: Optional[int] = None
+    amortize_start_date: Optional[str] = None
 
     @field_validator("debit", "credit", mode="before")
     @classmethod
@@ -348,6 +378,8 @@ class ExpenseUpdateRequest(BaseModel):
     property_id: Optional[int] = None
     vehicle_id: Optional[int] = None
     balanced_date: Optional[str] = None
+    amortize_months: Optional[int] = Field(default=None, ge=1, le=36)
+    amortize_start_date: Optional[str] = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -549,26 +581,55 @@ def expenses_summary(
     date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
     session: Session = Depends(get_session),
 ):
-    """Return total net expenses (debit - credit) grouped by month (YYYY-MM) and category."""
-    conditions = ["category IS NOT NULL"]
+    """Return total net expenses (debit - credit) grouped by month (YYYY-MM) and category.
+
+    Expenses with `amortize_months` > 1 are spread evenly across that many
+    months starting at `amortize_start_date` (falling back to `balanced_date`,
+    then `date`), so a single transaction can contribute a fraction of its
+    total to several consecutive months. Date filters are applied against the
+    resulting (post-amortization) month, not the original transaction date.
+    """
+    conditions = []
     params: dict = {}
 
     if date_from is not None:
-        conditions.append("date >= :date_from")
+        conditions.append("month_date >= :date_from::date")
         params["date_from"] = date_from
     if date_to is not None:
         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        conditions.append("date < :date_to_exclusive")
+        conditions.append("month_date < :date_to_exclusive::date")
         params["date_to_exclusive"] = next_day
 
-    where_clause = " AND ".join(conditions)
+    where_clause = " AND ".join(conditions) if conditions else "TRUE"
     sql = text(f"""
+        WITH amort AS (
+            SELECT
+                category,
+                (
+                    CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END
+                    - CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END
+                ) AS net,
+                GREATEST(COALESCE(amortize_months, 1), 1) AS months,
+                COALESCE(amortize_start_date, balanced_date, date)::date AS start_date
+            FROM all_expenses
+            WHERE category IS NOT NULL
+        ),
+        expanded AS (
+            SELECT
+                a.category,
+                date_trunc('month', a.start_date) + (gs.n || ' month')::interval AS month_date,
+                CASE
+                    WHEN gs.n < a.months - 1 THEN round(a.net / a.months, 2)
+                    ELSE a.net - round(a.net / a.months, 2) * (a.months - 1)
+                END AS amount
+            FROM amort a
+            CROSS JOIN LATERAL generate_series(0, a.months - 1) AS gs(n)
+        )
         SELECT
-            substring(COALESCE(balanced_date, date), 1, 7) AS month,
+            to_char(month_date, 'YYYY-MM') AS month,
             category,
-            SUM(CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END)::float  AS debit_total,
-            SUM(CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END)::float AS credit_total
-        FROM all_expenses
+            SUM(amount)::float AS total
+        FROM expanded
         WHERE {where_clause}
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -586,7 +647,7 @@ def expenses_summary(
         {
             "month": r[0],
             "category": r[1],
-            "total": safe_float(r[2]) - safe_float(r[3]),
+            "total": safe_float(r[2]),
         }
         for r in rows
     ]
@@ -599,27 +660,53 @@ def expenses_property_summary(
     date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
     session: Session = Depends(get_session),
 ):
-    """Return net expenses (debit - credit) grouped by month and rental property alias."""
-    conditions = ["e.property_id IS NOT NULL"]
+    """Return net expenses (debit - credit) grouped by month and rental property alias.
+
+    Expenses with `amortize_months` > 1 are spread evenly across that many
+    months, same as `/expenses/summary`.
+    """
+    conditions = []
     params: dict = {}
 
     if date_from is not None:
-        conditions.append("e.date >= :date_from")
+        conditions.append("month_date >= :date_from::date")
         params["date_from"] = date_from
     if date_to is not None:
         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        conditions.append("e.date < :date_to_exclusive")
+        conditions.append("month_date < :date_to_exclusive::date")
         params["date_to_exclusive"] = next_day
 
-    where_clause = " AND ".join(conditions)
+    where_clause = " AND ".join(conditions) if conditions else "TRUE"
     sql = text(f"""
+        WITH amort AS (
+            SELECT
+                e.property_id,
+                (
+                    CASE WHEN e.debit IS NULL OR e.debit = 'NaN'::numeric THEN 0 ELSE e.debit END
+                    - CASE WHEN e.credit IS NULL OR e.credit = 'NaN'::numeric THEN 0 ELSE e.credit END
+                ) AS net,
+                GREATEST(COALESCE(e.amortize_months, 1), 1) AS months,
+                COALESCE(e.amortize_start_date, e.balanced_date, e.date)::date AS start_date
+            FROM all_expenses e
+            WHERE e.property_id IS NOT NULL
+        ),
+        expanded AS (
+            SELECT
+                a.property_id,
+                date_trunc('month', a.start_date) + (gs.n || ' month')::interval AS month_date,
+                CASE
+                    WHEN gs.n < a.months - 1 THEN round(a.net / a.months, 2)
+                    ELSE a.net - round(a.net / a.months, 2) * (a.months - 1)
+                END AS amount
+            FROM amort a
+            CROSS JOIN LATERAL generate_series(0, a.months - 1) AS gs(n)
+        )
         SELECT
-            substring(COALESCE(e.balanced_date, e.date), 1, 7) AS month,
+            to_char(expanded.month_date, 'YYYY-MM') AS month,
             p.alias AS property,
-            SUM(CASE WHEN e.debit IS NULL OR e.debit = 'NaN'::numeric THEN 0 ELSE e.debit END)::float  AS debit_total,
-            SUM(CASE WHEN e.credit IS NULL OR e.credit = 'NaN'::numeric THEN 0 ELSE e.credit END)::float AS credit_total
-        FROM all_expenses e
-        JOIN rental_properties p ON e.property_id = p.id
+            SUM(expanded.amount)::float AS total
+        FROM expanded
+        JOIN rental_properties p ON expanded.property_id = p.id
         WHERE {where_clause}
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -637,7 +724,7 @@ def expenses_property_summary(
         {
             "month": r[0],
             "property": r[1],
-            "total": safe_float(r[2]) - safe_float(r[3]),
+            "total": safe_float(r[2]),
         }
         for r in rows
     ]
@@ -692,6 +779,12 @@ def update_expense(
         updated = True
     if "balanced_date" in body.model_fields_set:
         row.balanced_date = body.balanced_date
+        updated = True
+    if "amortize_months" in body.model_fields_set:
+        row.amortize_months = body.amortize_months
+        updated = True
+    if "amortize_start_date" in body.model_fields_set:
+        row.amortize_start_date = body.amortize_start_date
         updated = True
 
     if updated:

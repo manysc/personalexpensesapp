@@ -12,6 +12,8 @@ export interface Expense {
   vehicle_id: number | null;
   receipt_filename: string | null;
   balanced_date: string | null;
+  amortize_months: number | null;
+  amortize_start_date: string | null;
 }
 
 export interface ExpenseListResponse {

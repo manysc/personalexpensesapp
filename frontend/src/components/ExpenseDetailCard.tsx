@@ -13,6 +13,36 @@ interface Props {
 const inputClass =
   "w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
 
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function formatAmortizationSummary(
+  months: number | null,
+  startDate: string,
+  debit: number | null,
+  credit: number | null
+): string | null {
+  if (!months || months <= 1 || !startDate) return null;
+  const [yearStr, monthStr] = startDate.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr) - 1; // 0-indexed
+  if (Number.isNaN(year) || Number.isNaN(month)) return null;
+
+  const endIndex = month + months - 1;
+  const endYear = year + Math.floor(endIndex / 12);
+  const endMonth = endIndex % 12;
+
+  const net = (debit ?? 0) - (credit ?? 0);
+  const monthly = net / months;
+
+  const startLabel = `${MONTH_LABELS[month]} ${year}`;
+  const endLabel = `${MONTH_LABELS[endMonth]} ${endYear}`;
+
+  return `${months} months, ${startLabel} – ${endLabel} (~$${monthly.toFixed(2)}/mo)`;
+}
+
 export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const router = useRouter();
   const [overridden, setOverridden] = useState(expense.overridden);
@@ -23,6 +53,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [vehicleId, setVehicleId] = useState<number | null>(expense.vehicle_id);
   const [comments, setComments] = useState(expense.comments ?? "");
   const [balancedDate, setBalancedDate] = useState(expense.balanced_date ?? "");
+  const [amortizeMonths, setAmortizeMonths] = useState<number | null>(expense.amortize_months);
+  const [amortizeStartDate, setAmortizeStartDate] = useState(expense.amortize_start_date ?? "");
 
   // Draft values (used while editing)
   const [draftCategory, setDraftCategory] = useState(category);
@@ -34,6 +66,10 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   );
   const [draftComments, setDraftComments] = useState(comments);
   const [draftBalancedDate, setDraftBalancedDate] = useState(expense.balanced_date ?? "");
+  const [draftAmortizeMonths, setDraftAmortizeMonths] = useState<string>(
+    expense.amortize_months != null ? String(expense.amortize_months) : ""
+  );
+  const [draftAmortizeStartDate, setDraftAmortizeStartDate] = useState(expense.amortize_start_date ?? "");
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -52,11 +88,6 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
 
   useEffect(() => {
-    if (!editing) return;
-    fetch("/api/categories")
-      .then((r) => r.json() as Promise<Category[]>)
-      .then((data) => setCategories(data.map((c) => c.name)))
-      .catch(() => setCategories([]));
     fetch("/api/rental-properties")
       .then((r) => r.json() as Promise<RentalProperty[]>)
       .then(setProperties)
@@ -65,6 +96,14 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       .then((r) => r.json() as Promise<Vehicle[]>)
       .then(setVehicles)
       .catch(() => setVehicles([]));
+  }, []);
+
+  useEffect(() => {
+    if (!editing) return;
+    fetch("/api/categories")
+      .then((r) => r.json() as Promise<Category[]>)
+      .then((data) => setCategories(data.map((c) => c.name)))
+      .catch(() => setCategories([]));
   }, [editing]);
 
   function handleEdit() {
@@ -73,6 +112,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
     setDraftVehicleId(vehicleId != null ? String(vehicleId) : "");
     setDraftComments(comments);
     setDraftBalancedDate(balancedDate);
+    setDraftAmortizeMonths(amortizeMonths != null ? String(amortizeMonths) : "");
+    setDraftAmortizeStartDate(amortizeStartDate);
     setError(null);
     setEditing(true);
   }
@@ -106,6 +147,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
         vehicle_id: draftVehicleId ? Number(draftVehicleId) : null,
         comments: draftComments || null,
         balanced_date: draftBalancedDate || null,
+        amortize_months: draftAmortizeMonths ? Number(draftAmortizeMonths) : null,
+        amortize_start_date: draftAmortizeMonths ? draftAmortizeStartDate || null : null,
       };
       const res = await fetch(`/api/expenses/${expense.id}`, {
         method: "PATCH",
@@ -119,6 +162,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       setVehicleId(updated.vehicle_id);
       setComments(updated.comments ?? "");
       setBalancedDate(updated.balanced_date ?? "");
+      setAmortizeMonths(updated.amortize_months);
+      setAmortizeStartDate(updated.amortize_start_date ?? "");
       setOverridden(updated.overridden);
       setEditing(false);
     } catch (err) {
@@ -343,6 +388,39 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             ) : (
               <span className="text-sm text-gray-900">
                 {balancedDate || "—"}
+              </span>
+            )}
+          </dd>
+        </div>
+
+        {/* Amortization */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+          <dt className="text-sm font-medium text-gray-500">Amortize</dt>
+          <dd className="col-span-2">
+            {editing ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={36}
+                  value={draftAmortizeMonths}
+                  onChange={(e) => setDraftAmortizeMonths(e.target.value)}
+                  className={`${inputClass} w-24`}
+                  placeholder="Months"
+                  disabled={saving}
+                />
+                <span className="text-sm text-gray-500">months starting</span>
+                <input
+                  type="date"
+                  value={draftAmortizeStartDate}
+                  onChange={(e) => setDraftAmortizeStartDate(e.target.value)}
+                  className={inputClass}
+                  disabled={saving || !draftAmortizeMonths}
+                />
+              </div>
+            ) : (
+              <span className="text-sm text-gray-900">
+                {formatAmortizationSummary(amortizeMonths, amortizeStartDate, expense.debit, expense.credit) ?? "—"}
               </span>
             )}
           </dd>
