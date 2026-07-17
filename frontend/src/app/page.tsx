@@ -1,15 +1,16 @@
 "use client";
 
+import ActionList from "@/components/ActionList";
 import { useEffect, useState } from "react";
 import {
-    Bar,
-    BarChart,
-    CartesianGrid,
-    Legend,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 interface SummaryItem {
@@ -246,6 +247,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-gray-900">Dashboard</h1>
+
+      <ActionList />
 
       {/* Print-only date range */}
       {(appliedFrom || appliedTo) && (

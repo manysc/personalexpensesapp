@@ -98,3 +98,15 @@ export interface VehicleServiceRequest {
   description: string;
   mileage: number | null;
 }
+
+export interface ActionItem {
+  id: number;
+  action_key: string;
+  type: "rent_unpaid" | "utility_changed";
+  property_id: number | null;
+  month: string;
+  message: string;
+  status: "open" | "resolved";
+  created_at: string;
+  resolved_at: string | null;
+}
