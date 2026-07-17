@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
+from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.exc import IntegrityError
 
@@ -117,6 +117,20 @@ class _Category(_Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True)
     keywords = Column(Text, nullable=False, default="[]")  # JSON array of strings
+
+
+class _ActionItem(_Base):
+    __tablename__ = "action_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action_key = Column(String(200), nullable=False, unique=True)
+    type = Column(String(50), nullable=False)
+    property_id = Column(Integer, nullable=True)  # FK to rental_properties.id
+    month = Column(String(7), nullable=False)  # YYYY-MM
+    message = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default="open", server_default="open")
+    created_at = Column(DateTime, nullable=False, server_default=text("now()"))
+    resolved_at = Column(DateTime, nullable=True)
 
 
 def _get_engine():
@@ -323,6 +337,21 @@ def _run_migrations(engine) -> None:
                 "END $$;"
             )
         )
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS action_items ("
+                "  id SERIAL PRIMARY KEY, "
+                "  action_key VARCHAR(200) NOT NULL UNIQUE, "
+                "  type VARCHAR(50) NOT NULL, "
+                "  property_id INTEGER REFERENCES rental_properties(id) ON DELETE SET NULL, "
+                "  month VARCHAR(7) NOT NULL, "
+                "  message VARCHAR(500) NOT NULL, "
+                "  status VARCHAR(20) NOT NULL DEFAULT 'open', "
+                "  created_at TIMESTAMP NOT NULL DEFAULT now(), "
+                "  resolved_at TIMESTAMP "
+                ");"
+            )
+        )
         conn.commit()
 
 
@@ -422,6 +451,20 @@ class CategoryResponse(BaseModel):
 class CategoryRequest(BaseModel):
     name: str
     keywords: list[str] = []
+
+
+class ActionItemResponse(BaseModel):
+    id: int
+    action_key: str
+    type: str
+    property_id: Optional[int] = None
+    month: str
+    message: str
+    status: str
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +772,162 @@ def expenses_property_summary(
         for r in rows
     ]
     return JSONResponse(content=result)
+
+
+# ---------------------------------------------------------------------------
+# Action items (dashboard notifications)
+# ---------------------------------------------------------------------------
+
+UTILITY_CHANGE_THRESHOLD = 0.05  # 5% month-over-month change triggers an alert
+
+
+def _upsert_action_item(
+    session: Session,
+    action_key: str,
+    type_: str,
+    property_id: Optional[int],
+    month: str,
+    message: str,
+) -> None:
+    """Insert a newly-detected action item, leaving existing ones (and their
+    resolved status) untouched."""
+    session.execute(
+        text(
+            "INSERT INTO action_items (action_key, type, property_id, month, message) "
+            "VALUES (:action_key, :type, :property_id, :month, :message) "
+            "ON CONFLICT (action_key) DO NOTHING"
+        ),
+        {
+            "action_key": action_key,
+            "type": type_,
+            "property_id": property_id,
+            "month": month,
+            "message": message,
+        },
+    )
+
+
+def _match_utility_vendor(description: str, keywords: list[str]) -> Optional[str]:
+    """Return the first Utilities keyword found (case-insensitive) in the description."""
+    desc_upper = description.upper()
+    for kw in keywords:
+        if kw.upper() in desc_upper:
+            return kw
+    return None
+
+
+def _previous_calendar_month(month: str) -> str:
+    """Given 'YYYY-MM', return the immediately preceding calendar month in the same format."""
+    year, mon = (int(part) for part in month.split("-"))
+    if mon == 1:
+        return f"{year - 1}-12"
+    return f"{year}-{mon - 1:02d}"
+
+
+def _detect_action_items(session: Session) -> None:
+    """Detect unpaid rent and utility-payment changes, persisting any newly
+    found issues. Already-persisted items (open or resolved) are left as-is."""
+    now = datetime.now()
+    current_month = now.strftime("%Y-%m")
+    today_day = now.day
+
+    # 1) Rent unpaid: current month only, no grace period.
+    properties = session.execute(
+        text("SELECT id, alias, payment_day FROM rental_properties WHERE payment_day IS NOT NULL")
+    ).fetchall()
+    for prop_id, alias, payment_day in properties:
+        if today_day < payment_day:
+            continue
+        paid = session.execute(
+            text(
+                "SELECT 1 FROM all_expenses "
+                "WHERE category = 'Real State' AND property_id = :pid "
+                "AND CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END > 0 "
+                "AND to_char(COALESCE(balanced_date, date)::date, 'YYYY-MM') = :month "
+                "LIMIT 1"
+            ),
+            {"pid": prop_id, "month": current_month},
+        ).fetchone()
+        if paid is None:
+            key = f"rent_unpaid:{prop_id}:{current_month}"
+            message = f"Rent for {alias} hasn't been paid for {current_month}."
+            _upsert_action_item(session, key, "rent_unpaid", prop_id, current_month, message)
+
+    # 2) Utility payment changed: >=5% month-over-month change for the same
+    # vendor (derived from the Utilities category keyword list) and property.
+    rows = session.execute(
+        text(
+            "SELECT property_id, description, "
+            "(CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END) "
+            "- (CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END) AS net, "
+            "to_char(COALESCE(balanced_date, date)::date, 'YYYY-MM') AS month "
+            "FROM all_expenses WHERE category = 'Utilities'"
+        )
+    ).fetchall()
+
+    utility_keywords = RULE_BASED_CATEGORIES.get("Utilities", [])
+    totals: dict[tuple[Optional[int], str], dict[str, float]] = {}
+    for property_id, description, net, month in rows:
+        vendor = _match_utility_vendor(description, utility_keywords)
+        if vendor is None:
+            continue
+        month_totals = totals.setdefault((property_id, vendor), {})
+        month_totals[month] = month_totals.get(month, 0.0) + float(net)
+
+    property_alias_by_id = {
+        r[0]: r[1] for r in session.execute(text("SELECT id, alias FROM rental_properties")).fetchall()
+    }
+
+    for (property_id, vendor), month_totals in totals.items():
+        months_sorted = sorted(month_totals.keys())
+        latest_month = months_sorted[-1]
+        prior_month = _previous_calendar_month(latest_month)
+        if prior_month not in month_totals:
+            continue
+        prior_amount = month_totals[prior_month]
+        latest_amount = month_totals[latest_month]
+        if prior_amount == 0:
+            continue
+        pct_change = abs(latest_amount - prior_amount) / abs(prior_amount)
+        if pct_change < UTILITY_CHANGE_THRESHOLD:
+            continue
+        prop_label = f" for {property_alias_by_id[property_id]}" if property_id in property_alias_by_id else ""
+        key = f"utility_changed:{property_id or 'none'}:{vendor}:{latest_month}"
+        message = (
+            f"{vendor} payment{prop_label} changed from ${prior_amount:,.2f} to "
+            f"${latest_amount:,.2f} in {latest_month}."
+        )
+        _upsert_action_item(session, key, "utility_changed", property_id, latest_month, message)
+
+    session.commit()
+
+
+@app.get("/expenses/action-items", response_model=list[ActionItemResponse])
+def list_action_items(
+    include_resolved: bool = Query(default=False, description="Include already-resolved items"),
+    session: Session = Depends(get_session),
+):
+    """Detect (and persist) new action items, then return open ones (or all, if requested)."""
+    _detect_action_items(session)
+    stmt = select(_ActionItem)
+    if not include_resolved:
+        stmt = stmt.where(_ActionItem.status == "open")
+    stmt = stmt.order_by(_ActionItem.created_at.desc())
+    rows = session.execute(stmt).scalars().all()
+    return [ActionItemResponse.model_validate(r) for r in rows]
+
+
+@app.post("/expenses/action-items/{item_id}/resolve", response_model=ActionItemResponse)
+def resolve_action_item(item_id: int, session: Session = Depends(get_session)):
+    """Mark an action item as resolved, hiding it from the default action list."""
+    row = session.get(_ActionItem, item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Action item {item_id} not found.")
+    row.status = "resolved"
+    row.resolved_at = datetime.now()
+    session.commit()
+    session.refresh(row)
+    return ActionItemResponse.model_validate(row)
 
 
 @app.get("/expenses/{expense_id}", response_model=ExpenseResponse)
