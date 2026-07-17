@@ -1180,10 +1180,16 @@ def sync_expenses_by_tenant(
     property_id: int,
     session: Session = Depends(get_session),
 ):
-    """Find expenses whose description contains any keyword from the tenant name and assign this property to them.
+    """Find expenses whose description contains keywords from the tenant name and assign this property to them.
 
     The tenant string is split on whitespace and '&'; each token of 2+ characters
-    is matched case-insensitively against the expense description (OR logic).
+    is matched case-insensitively against the expense description.
+
+    Normally any single token matching is enough (OR logic). However, if another
+    rental property has a tenant with the same first name, matching on the first
+    name alone would be ambiguous, so in that case the first name AND at least
+    one other token (e.g. the last name) must both be present (AND logic) to
+    disambiguate between the two tenants.
     """
     prop = session.get(_RentalProperty, property_id)
     if prop is None:
@@ -1192,7 +1198,7 @@ def sync_expenses_by_tenant(
         return SyncExpensesResponse(updated=0)
 
     import re
-    from sqlalchemy import func, or_, update as sa_update
+    from sqlalchemy import and_, func, or_, update as sa_update
 
     # Split on whitespace and '&', keep only tokens with 2+ characters
     keywords = [t.lower() for t in re.split(r"[\s&]+", prop.tenant.strip()) if len(t) >= 2]
@@ -1203,9 +1209,26 @@ def sync_expenses_by_tenant(
         func.lower(_AllExpense.description).contains(kw)
         for kw in keywords
     ]
+
+    first_name = keywords[0]
+    other_first_names = {
+        other.tenant.strip().split()[0].lower()
+        for other in session.execute(
+            select(_RentalProperty).where(_RentalProperty.id != property_id)
+        ).scalars()
+        if other.tenant and other.tenant.strip()
+    }
+
+    if len(keywords) > 1 and first_name in other_first_names:
+        # Ambiguous first name shared with another property's tenant: require
+        # the first name AND at least one other token (e.g. last name) to match.
+        match_condition = and_(conditions[0], or_(*conditions[1:]))
+    else:
+        match_condition = or_(*conditions)
+
     stmt = (
         sa_update(_AllExpense)
-        .where(or_(*conditions))
+        .where(match_condition)
         .values(property_id=property_id)
         .execution_options(synchronize_session="fetch")
     )
