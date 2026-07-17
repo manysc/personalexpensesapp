@@ -1012,7 +1012,12 @@ def update_category(
     body: CategoryRequest,
     session: Session = Depends(get_session),
 ):
-    """Update an existing category and re-categorize matching non-overridden expenses."""
+    """Update an existing category and re-categorize matching expenses.
+
+    Renaming propagates to non-overridden expenses only. Keyword re-apply
+    updates any expense (including overridden ones) whose current category
+    doesn't already match this category's name.
+    """
     row = session.get(_Category, category_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Category {category_id} not found.")
@@ -1037,13 +1042,16 @@ def update_category(
         )
         total_updated += result.rowcount  # type: ignore[attr-defined]
 
-    # Re-apply keywords: update non-overridden expenses matching any keyword
+    # Re-apply keywords: update expenses matching any keyword whose category is
+    # not already this one. This includes overridden expenses whose category is
+    # stale/wrong relative to the keyword match; the overridden flag itself is
+    # left unchanged.
     if body.keywords:
         conditions = " OR ".join(f"description ILIKE :kw{i}" for i in range(len(body.keywords)))
         params: dict = {"cat": new_name}
         params.update({f"kw{i}": f"%{kw}%" for i, kw in enumerate(body.keywords)})
         result = session.execute(
-            text(f"UPDATE all_expenses SET category = :cat WHERE overridden = false AND ({conditions})"),
+            text(f"UPDATE all_expenses SET category = :cat WHERE category IS DISTINCT FROM :cat AND ({conditions})"),
             params,
         )
         total_updated += result.rowcount  # type: ignore[attr-defined]
