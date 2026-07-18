@@ -1,7 +1,10 @@
-import os
-from pathlib import Path
+import io
 
 import pandas as pd
+
+from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, put_object_bytes
+
+_CORRECTIONS_KEY = "resources/corrections.csv"
 
 
 class FilePersistence:
@@ -10,28 +13,23 @@ class FilePersistence:
 
     @staticmethod
     def load_corrections(filename=None):
-        if filename is None:
-            # Use absolute path based on this file's location
-            project_root = Path(__file__).parent.parent.parent.parent
-            filename = str(project_root / "resources" / "corrections.csv")
-
-        if os.path.exists(filename):
-            return pd.read_csv(filename)
-        else:
+        """`filename` is an S3 object key; defaults to `resources/corrections.csv`."""
+        key = filename or _CORRECTIONS_KEY
+        try:
+            return pd.read_csv(io.BytesIO(get_object_bytes(key)))
+        except FileNotFoundError:
             return pd.DataFrame(columns=["Description", "Category"])
 
     @staticmethod
     def save_corrections(corrections, filename=None):
-        if filename is None:
-            # Use absolute path based on this file's location
-            project_root = Path(__file__).parent.parent.parent.parent
-            filename = str(project_root / "resources" / "corrections.csv")
-
-        if os.path.exists(filename):
-            prev = pd.read_csv(filename)
+        """`filename` is an S3 object key; defaults to `resources/corrections.csv`."""
+        key = filename or _CORRECTIONS_KEY
+        try:
+            prev = pd.read_csv(io.BytesIO(get_object_bytes(key)))
             all_corr = pd.concat(
                 [prev, corrections], ignore_index=True
             ).drop_duplicates(subset=["Description", "Category"])
-        else:
+        except FileNotFoundError:
             all_corr = corrections
-        all_corr.to_csv(filename, index=False)
+        put_object_bytes(key, all_corr.to_csv(index=False).encode("utf-8"))
+

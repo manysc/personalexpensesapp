@@ -1,10 +1,11 @@
-import os
+import io
 
 import pandas as pd
 
 from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
+from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
 
 
 class CitiCsvFileLoader:
@@ -13,17 +14,15 @@ class CitiCsvFileLoader:
 
     @staticmethod
     def load_expenses(filename):
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
-        df = pd.read_csv(filename)
+        """`filename` is an S3 object key, fetched from SeaweedFS."""
+        df = pd.read_csv(io.BytesIO(get_object_bytes(filename)))
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         return df[df["Debit"].notnull()]
 
     @staticmethod
     def load_credits(filename):
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
-        df = pd.read_csv(filename)
+        """`filename` is an S3 object key, fetched from SeaweedFS."""
+        df = pd.read_csv(io.BytesIO(get_object_bytes(filename)))
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
         df["Credit"] = df["Credit"].abs()
         return df[df["Credit"].notnull()]
@@ -33,11 +32,11 @@ class CitiCsvFileLoader:
         """
         Load both expenses (debits) and credits from a CSV file and combine them.
         Returns a DataFrame with both debits and credits.
-        """
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
 
-        df = pd.read_csv(filename)
+        `filename` is an S3 object key (e.g. "resources/citi/2025/csv/citi-jan-2025.CSV"),
+        fetched from SeaweedFS rather than the local filesystem.
+        """
+        df = pd.read_csv(io.BytesIO(get_object_bytes(filename)))
         df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
         df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
         df["Credit"] = df["Credit"].abs()
@@ -51,7 +50,7 @@ class CitiCsvFileLoader:
         categorized_expenses = RuleBasedExpenseCategorizer()
         csv_file_loader = CitiCsvFileLoader()
         for filename in file_list:
-            if os.path.exists(filename):
+            if object_exists(filename):
                 df = csv_file_loader.load_expenses_and_credits(filename)
                 labeled = categorized_expenses.categorize_expenses(df)
                 all_expenses.append(labeled)

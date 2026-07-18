@@ -1,4 +1,4 @@
-import os
+import io
 import re
 
 import pandas as pd
@@ -7,6 +7,7 @@ import pdfplumber
 from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
+from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
 
 
 class WellsfargoFileLoader:
@@ -83,9 +84,11 @@ class WellsfargoFileLoader:
         1/2 Bank of America Mortgage 250102 P12739652 , Salas M 798.44 3,157.01
 
         Some transactions span multiple lines when description is long.
+
+        `filename` is an S3 object key (e.g. "resources/wellsfargo/2025/wellsfargo-jan-2025.pdf"),
+        fetched from SeaweedFS rather than the local filesystem.
         """
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
+        pdf_bytes = get_object_bytes(filename)
 
         transactions = []
 
@@ -99,7 +102,7 @@ class WellsfargoFileLoader:
         }
         statement_month_num = month_map.get(statement_month.lower(), 1)
 
-        with pdfplumber.open(filename) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             in_transaction_section = False
             pending_line = None  # Store line that might continue on next line
 
@@ -242,7 +245,7 @@ class WellsfargoFileLoader:
         pdf_file_loader = WellsfargoFileLoader()
 
         for filename in file_list:
-            if os.path.exists(filename):
+            if object_exists(filename):
                 df = pdf_file_loader.load_expenses_and_credits(filename)
                 labeled = categorized_expenses.categorize_expenses(df)
                 all_expenses.append(labeled)

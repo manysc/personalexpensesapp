@@ -9,3 +9,8 @@ build/
 
 # Environment / secrets
 .env
+s3.json
+
+# Bank statements / expense receipts — stored in SeaweedFS (S3), not git
+resources/
+receipts/

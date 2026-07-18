@@ -2,6 +2,7 @@ import contextlib
 import io
 import math
 import json
+import mimetypes
 import os
 import queue
 import re
@@ -15,7 +16,7 @@ from typing import Optional
 import pandas as pd
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text, UniqueConstraint, create_engine, select, text
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -23,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 
 from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED_CATEGORIES, RuleBasedExpenseCategorizer
 from personal_expenses_app.core.summarizer import Summarizer
+from personal_expenses_app.infrastructure import s3_storage
 from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFileLoader
 from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
 from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
@@ -33,12 +35,13 @@ from personal_expenses_app.interface.user_interaction import UserInteraction
 _project_root = Path(__file__).parent.parent.parent.parent
 load_dotenv(_project_root / ".env")
 
-RECEIPTS_DIR = Path(os.environ.get("RECEIPTS_DIR", str(_project_root / "receipts")))
+RECEIPTS_PREFIX = "receipts/"
 _ALLOWED_RECEIPT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _run_migrations(_get_engine())
+    s3_storage.ensure_bucket_exists()
     yield
 
 
@@ -1083,19 +1086,12 @@ async def upload_receipt(
 
     stored_name = f"{expense_id}_{safe_name}"
 
-    # Remove old receipt file if present
+    # Remove old receipt object if present
     if row.receipt_filename:
-        old_path = RECEIPTS_DIR / row.receipt_filename
-        if old_path.exists():
-            old_path.unlink()
-
-    RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
-    dest = (RECEIPTS_DIR / stored_name).resolve()
-    if not str(dest).startswith(str(RECEIPTS_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid filename.")
+        s3_storage.delete_object(f"{RECEIPTS_PREFIX}{row.receipt_filename}")
 
     contents = await receipt.read()
-    dest.write_bytes(contents)
+    s3_storage.put_object_bytes(f"{RECEIPTS_PREFIX}{stored_name}", contents)
 
     row.receipt_filename = stored_name
     session.commit()
@@ -1116,20 +1112,21 @@ def get_receipt(
     if not row.receipt_filename:
         raise HTTPException(status_code=404, detail="No receipt attached to this expense.")
 
-    file_path = (RECEIPTS_DIR / row.receipt_filename).resolve()
-    if not str(file_path).startswith(str(RECEIPTS_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid receipt path.")
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Receipt file not found on disk.")
+    try:
+        contents = s3_storage.get_object_bytes(f"{RECEIPTS_PREFIX}{row.receipt_filename}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Receipt file not found in storage.")
 
     # Strip the leading "{expense_id}_" prefix for a clean download name
     prefix = f"{expense_id}_"
     display_name = row.receipt_filename[len(prefix):] if row.receipt_filename.startswith(prefix) else row.receipt_filename
 
-    return FileResponse(
-        path=str(file_path),
-        filename=display_name,
-        content_disposition_type="inline" if inline else "attachment",
+    media_type = mimetypes.guess_type(display_name)[0] or "application/octet-stream"
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=contents,
+        media_type=media_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{display_name}"'},
     )
 
 
@@ -1145,9 +1142,7 @@ def delete_receipt(
     if not row.receipt_filename:
         raise HTTPException(status_code=404, detail="No receipt attached to this expense.")
 
-    file_path = (RECEIPTS_DIR / row.receipt_filename).resolve()
-    if str(file_path).startswith(str(RECEIPTS_DIR.resolve())) and file_path.exists():
-        file_path.unlink()
+    s3_storage.delete_object(f"{RECEIPTS_PREFIX}{row.receipt_filename}")
 
     row.receipt_filename = None
     session.commit()
@@ -1667,11 +1662,6 @@ def run_pipeline(body: PipelineRunRequest):
         chase_m = set(body.chase_months)
         banamex_m = set(body.banamex_months)
 
-        citi_dir = _project_root / "resources" / "citi" / year
-        wf_dir = _project_root / "resources" / "wellsfargo" / year
-        chase_dir = _project_root / "resources" / "chase" / year
-        banamex_dir = _project_root / "resources" / "banamex" / year
-
         citi_loader = CitiFileLoader()
         wf_loader = WellsfargoFileLoader()
         chase_loader = ChaseFileLoader()
@@ -1691,23 +1681,23 @@ def run_pipeline(body: PipelineRunRequest):
             print(f"\nProcessing {month} {year}...")
             dfs = []
             if month in citi_m:
-                path = str(citi_dir / f"citi-{month}-{year}.pdf")
-                df = citi_loader.load_expenses_and_credits(path)
+                key = f"resources/citi/{year}/citi-{month}-{year}.pdf"
+                df = citi_loader.load_expenses_and_credits(key)
                 if df is not None and not df.empty:
                     dfs.append(df)
             if month in wf_m:
-                path = str(wf_dir / f"wellsfargo-{month}-{year}.pdf")
-                df = wf_loader.load_expenses_and_credits(path)
+                key = f"resources/wellsfargo/{year}/wellsfargo-{month}-{year}.pdf"
+                df = wf_loader.load_expenses_and_credits(key)
                 if df is not None and not df.empty:
                     dfs.append(df)
             if month in chase_m:
-                path = str(chase_dir / f"chase-{month}-{year}.pdf")
-                df = chase_loader.load_expenses_and_credits(path)
+                key = f"resources/chase/{year}/chase-{month}-{year}.pdf"
+                df = chase_loader.load_expenses_and_credits(key)
                 if df is not None and not df.empty:
                     dfs.append(df)
             if month in banamex_m:
-                path = str(banamex_dir / f"banamex-{month}-{year}.pdf")
-                df = banamex_loader.load_expenses_and_credits(path)
+                key = f"resources/banamex/{year}/banamex-{month}-{year}.pdf"
+                df = banamex_loader.load_expenses_and_credits(key)
                 if df is not None and not df.empty:
                     dfs.append(df)
 
@@ -1770,12 +1760,10 @@ def list_statements(bank: str, year: str):
     """Return the months that have a statement PDF for the given bank and year."""
     if bank not in _VALID_BANKS:
         raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
-    stmts_dir = _project_root / "resources" / bank / year
-    if not stmts_dir.exists():
-        return []
+    existing_keys = set(s3_storage.list_keys(prefix=f"resources/{bank}/{year}/"))
     return [
         month for month in _PIPELINE_MONTH_ORDER
-        if (stmts_dir / f"{bank}-{month}-{year}.pdf").exists()
+        if f"resources/{bank}/{year}/{bank}-{month}-{year}.pdf" in existing_keys
     ]
 
 
@@ -1790,11 +1778,8 @@ async def upload_statement(bank: str, year: str, month: str, file: UploadFile = 
         raise HTTPException(status_code=400, detail=f"Invalid year: {year}")
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
-    stmts_dir = _project_root / "resources" / bank / year
-    stmts_dir.mkdir(parents=True, exist_ok=True)
-    dest = stmts_dir / f"{bank}-{month}-{year}.pdf"
     content = await file.read()
-    dest.write_bytes(content)
+    s3_storage.put_object_bytes(f"resources/{bank}/{year}/{bank}-{month}-{year}.pdf", content)
     return {"uploaded": True}
 
 
@@ -1805,8 +1790,14 @@ def download_statement(bank: str, year: str, month: str):
         raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
     if month not in _VALID_MONTHS_SET:
         raise HTTPException(status_code=400, detail=f"Unknown month: {month}")
-    path = _project_root / "resources" / bank / year / f"{bank}-{month}-{year}.pdf"
-    if not path.exists():
+    filename = f"{bank}-{month}-{year}.pdf"
+    try:
+        content = s3_storage.get_object_bytes(f"resources/{bank}/{year}/{filename}")
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Statement not found")
-    return FileResponse(str(path), media_type="application/pdf", filename=f"{bank}-{month}-{year}.pdf")
-
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+    
