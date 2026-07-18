@@ -25,3 +25,57 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      S3_CONFIG_PATH: /app/s3.json
+    volumes:
+      - ./s3.json:/app/s3.json:ro
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+  # S3-compatible object storage (SeaweedFS) for bank statements/receipts.
+  # Not published to the network/LAN. The S3 port is bound to 127.0.0.1 only
+  # so a host-run `uvicorn` (local dev, no Dockerfile.backend) can reach it
+  # at http://localhost:8333; other containers reach it at http://seaweedfs:8333.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.39
+    command: >-
+      server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/identities.json
+      -master.port=9333 -volume.port=8080 -filer=true -filer.port=8888
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs_data:/data
+      - ./seaweedfs/identities.json:/etc/seaweedfs/identities.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # Web-based Admin UI for SeaweedFS: browse buckets/files (with inline
+  # image/PDF preview), inspect cluster topology/volumes, etc. Same tag as
+  # `seaweedfs` above to guarantee wire-protocol compatibility. Bound to
+  # 127.0.0.1 only — open http://localhost:23646 in a browser to use it.
+  # Change the default admin/admin login via SEAWEEDFS_ADMIN_USER /
+  # SEAWEEDFS_ADMIN_PASSWORD env vars (e.g. in a local .env override).
+  seaweedfs-admin:
+    image: chrislusf/seaweedfs:4.39
+    command: >-
+      admin -port=23646 -master=seaweedfs:9333 -dataDir=/data
+      -adminUser=${SEAWEEDFS_ADMIN_USER:-admin}
+      -adminPassword=${SEAWEEDFS_ADMIN_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:23646:23646"
+    volumes:
+      - seaweedfs_admin_data:/data
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  seaweedfs_data:
+  seaweedfs_admin_data:

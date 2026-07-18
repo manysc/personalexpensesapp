@@ -1,5 +1,5 @@
+import io
 import logging
-import os
 import re
 
 import pandas as pd
@@ -8,6 +8,7 @@ import pdfplumber
 from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
+from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,14 @@ class ChaseFileLoader:
         Extract transaction data from a Chase PDF statement.
         Returns a DataFrame with Date, Description, Debit, and Credit columns.
 
+        `filename` is an S3 object key (e.g. "resources/chase/2025/chase-jan-2025.pdf"),
+        fetched from SeaweedFS rather than the local filesystem.
+
         Chase format has two sections:
         - DEPOSITS AND ADDITIONS (credits)
         - ELECTRONIC WITHDRAWALS (debits)
         """
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
+        pdf_bytes = get_object_bytes(filename)
 
         credits = []
         debits = []
@@ -72,7 +75,7 @@ class ChaseFileLoader:
         }
         statement_month_num = month_map.get(statement_month.lower(), 1)
 
-        with pdfplumber.open(filename) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             current_section = None
 
             for page in pdf.pages:
@@ -228,7 +231,7 @@ class ChaseFileLoader:
         chase_file_loader = ChaseFileLoader()
 
         for filename in file_list:
-            if os.path.exists(filename):
+            if object_exists(filename):
                 df = chase_file_loader.load_expenses_and_credits(filename)
                 labeled = categorized_expenses.categorize_expenses(df)
                 all_expenses.append(labeled)

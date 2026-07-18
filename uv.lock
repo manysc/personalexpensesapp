@@ -38,6 +38,34 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.43.51"
+source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/boto3/1.43.51/boto3-1.43.51.tar.gz", hash = "sha256:b5a416cc703db73b69b22bef563c89c1fb14a4b10a93628d3c7abc4dd1aaf979" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/boto3/1.43.51/boto3-1.43.51-py3-none-any.whl", hash = "sha256:a97057bb609fd38c80448db6a93db770786775dabd651401debf09816d4553d7" },
+]
+
+[[package]]
+name = "botocore"
+version = "1.43.51"
+source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
+dependencies = [
+    { name = "jmespath" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/botocore/1.43.51/botocore-1.43.51.tar.gz", hash = "sha256:e0e5e88585fdb01dcb6b533ac2dd3f18d5d45092a14ccbfd330e3576a4152128" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/botocore/1.43.51/botocore-1.43.51-py3-none-any.whl", hash = "sha256:7c2c538c932bddc95834e177ce6f91dcc388c6a7934b4f8d0db13caa30e3e543" },
+]
+
+[[package]]
 name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
@@ -391,6 +419,15 @@ wheels = [
 ]
 
 [[package]]
+name = "jmespath"
+version = "1.1.0"
+source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
+sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/jmespath/1.1/jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/jmespath/1.1/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64" },
+]
+
+[[package]]
 name = "joblib"
 version = "1.5.1"
 source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
@@ -530,6 +567,7 @@ name = "personal-expenses-app"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "fastapi" },
     { name = "numpy" },
     { name = "pandas" },
@@ -544,6 +582,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.34.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", specifier = ">=2.2.2" },
@@ -936,6 +975,18 @@ wheels = [
 ]
 
 [[package]]
+name = "s3transfer"
+version = "0.19.1"
+source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/s3transfer/0.19.1/s3transfer-0.19.1.tar.gz", hash = "sha256:d3d6371dc3f1e5c5427b2b457bcf13bcf87bec334c95aed18642eae61f6926f3" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/s3transfer/0.19.1/s3transfer-0.19.1-py3-none-any.whl", hash = "sha256:d5fd7005ee39307455ad5f310b5ea67f4b1960d7fed5b3671ee50c249de675de" },
+]
+
+[[package]]
 name = "scikit-learn"
 version = "1.7.0"
 source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
@@ -1127,6 +1178,15 @@ source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-pa
 sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/tzdata/2025.2/tzdata-2025.2.tar.gz", hash = "sha256:b60a638fcc0daffadf82fe0f57e53d06bdec2f36c4df66280ae79bce6bd6f2b9" }
 wheels = [
     { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/tzdata/2025.2/tzdata-2025.2-py2.py3-none-any.whl", hash = "sha256:1a403fada01ff9221ca8044d701868fa132215d84beb92242d9acd2147f667a8" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.7.0"
+source = { registry = "https://pkgs.dev.azure.com/mts-packages/_packaging/mts-packages/pypi/simple/" }
+sdist = { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/urllib3/2.7/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/mts-packages/_packaging/a3d5a63a-c1b1-4528-94e7-85025c120143/pypi/download/urllib3/2.7/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897" },
 ]
 
 [[package]]

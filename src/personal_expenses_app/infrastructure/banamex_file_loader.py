@@ -1,5 +1,5 @@
+import io
 import logging
-import os
 import re
 
 import pandas as pd
@@ -8,6 +8,7 @@ import pdfplumber
 from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
+from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +58,11 @@ class BanamexFileLoader:
         Each transaction starts with DD MMM and can span multiple lines.
         Lines with SUC, CAJA, HORA are metadata and should be excluded.
         The last line of each transaction contains the amounts.
+
+        `filename` is an S3 object key (e.g. "resources/banamex/2025/banamex-jan-2025.pdf"),
+        fetched from SeaweedFS rather than the local filesystem.
         """
-        if not os.path.isfile(filename):
-            raise FileNotFoundError(f"File not found: {filename}")
+        pdf_bytes = get_object_bytes(filename)
 
         all_transactions = []
 
@@ -73,7 +76,7 @@ class BanamexFileLoader:
         }
         statement_month_num = month_map.get(statement_month.lower(), 1)
 
-        with pdfplumber.open(filename) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             in_transaction_section = False
             current_transaction = None
             self.previous_balance = None  # Track as instance variable
@@ -358,7 +361,7 @@ class BanamexFileLoader:
         banamex_file_loader = BanamexFileLoader()
 
         for filename in file_list:
-            if os.path.exists(filename):
+            if object_exists(filename):
                 df = banamex_file_loader.load_expenses_and_credits(filename)
                 labeled = categorized_expenses.categorize_expenses(df)
                 all_expenses.append(labeled)

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pandas as pd
 
 from personal_expenses_app.core.rule_based_expense_categorizer import (
@@ -20,13 +18,10 @@ from personal_expenses_app.interface.user_interaction import UserInteraction
 
 def pipeline():
     # Load and label all data
-    # Get the project root directory (2 levels up from this file)
-    project_root = Path(__file__).parent.parent.parent
     statements_year = "2026"
 
-    citi_resources_dir = project_root/"resources"/"citi"/statements_year
     citi_file_list = [
-        str(citi_resources_dir / f"citi-{month}-{statements_year}.pdf")
+        f"resources/citi/{statements_year}/citi-{month}-{statements_year}.pdf"
         for month in [
             "jan",
             "feb",
@@ -44,9 +39,8 @@ def pipeline():
     ]
     citi_file_loader = CitiFileLoader()
 
-    wellsfargo_resources_dir = project_root/"resources"/"wellsfargo"/statements_year
     wellsfargo_file_list = [
-        str(wellsfargo_resources_dir / f"wellsfargo-{month}-{statements_year}.pdf")
+        f"resources/wellsfargo/{statements_year}/wellsfargo-{month}-{statements_year}.pdf"
         for month in [
             "jan",
             "feb",
@@ -64,9 +58,8 @@ def pipeline():
     ]
     wellsfargo_file_loader = WellsfargoFileLoader()
 
-    chase_resources_dir = project_root/"resources"/"chase"/statements_year
     chase_file_list = [
-        str(chase_resources_dir / f"chase-{month}-{statements_year}.pdf")
+        f"resources/chase/{statements_year}/chase-{month}-{statements_year}.pdf"
         for month in [
             "jan",
             "feb",
@@ -84,9 +77,8 @@ def pipeline():
     ]
     chase_file_loader = ChaseFileLoader()
 
-    banamex_resources_dir = project_root/"resources"/"banamex"/statements_year
     banamex_file_list = [
-        str(banamex_resources_dir / f"banamex-{month}-{statements_year}.pdf")
+        f"resources/banamex/{statements_year}/banamex-{month}-{statements_year}.pdf"
         for month in [
             "jan",
             "feb",

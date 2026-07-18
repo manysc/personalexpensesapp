@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pandas as pd
 
 from personal_expenses_app.core.corrections import Corrections
@@ -18,12 +16,8 @@ from personal_expenses_app.interface.user_interaction import UserInteraction
 
 def pipeline():
     # 1. Load and label all data for model training
-    # Get the project root directory (2 levels up from this file)
-    project_root = Path(__file__).parent.parent.parent
-
-    citi_resources_dir = project_root / "resources" / "citi"
     citi_file_list = [
-        str(citi_resources_dir / f"citi-{month}-2025.CSV")
+        f"resources/citi/citi-{month}-2025.CSV"
         for month in [
             "jan",
             "feb",
@@ -40,9 +34,8 @@ def pipeline():
     citi_file_loader = CitiCsvFileLoader()
     citi_expenses = citi_file_loader.load_and_label_multiple_files(citi_file_list)
 
-    wellsfargo_resources_dir = project_root / "resources" / "wellsfargo"
     wellsfargo_file_list = [
-        str(wellsfargo_resources_dir / f"wellsfargo-{month}-2025.pdf")
+        f"resources/wellsfargo/wellsfargo-{month}-2025.pdf"
         for month in [
             "jan",
             "feb",
@@ -63,9 +56,8 @@ def pipeline():
     # append Wellsfargo expenses to Citi expenses
     citi_expenses = pd.concat([citi_expenses, wellsfargo_expenses])
 
-    chase_resources_dir = project_root / "resources" / "chase"
     chase_file_list = [
-        str(chase_resources_dir / f"chase-{month}-2025.pdf")
+        f"resources/chase/chase-{month}-2025.pdf"
         for month in [
             "jan",
             "feb",
@@ -120,7 +112,7 @@ def pipeline():
 
         # 5. Load and apply corrections
         file_persistence = FilePersistence()
-        corrections_file = str(project_root / "resources" / "corrections.csv")
+        corrections_file = "resources/corrections.csv"
         corrections_df = file_persistence.load_corrections(corrections_file)
         corrections = Corrections()
         ml_corrected = corrections.apply_corrections(
