@@ -76,6 +76,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Periodically backs up the "expenses-documents" SeaweedFS bucket to a
+  # local timestamped tar.gz under ./backups/s3/. Runs once immediately,
+  # then repeats every S3_BACKUP_INTERVAL_DAYS (default 30, override via
+  # a .env S3_BACKUP_INTERVAL_DAYS=<days>).
+  s3-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    command: ["--loop"]
+    environment:
+      S3_CONFIG_PATH: /app/s3.json
+      S3_BACKUP_INTERVAL_DAYS: ${S3_BACKUP_INTERVAL_DAYS:-30}
+    volumes:
+      - ./s3.json:/app/s3.json:ro
+      - ./backups/s3:/app/backups/s3
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   seaweedfs_data:
   seaweedfs_admin_data:
