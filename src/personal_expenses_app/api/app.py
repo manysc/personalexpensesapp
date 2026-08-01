@@ -826,6 +826,26 @@ def _previous_calendar_month(month: str) -> str:
         return f"{year - 1}-12"
     return f"{year}-{mon - 1:02d}"
 
+def _resolve_action_item(
+    session: Session,
+    key: str,
+    resolution_message: str,
+) -> None:
+    session.execute(
+        text(
+            """
+            UPDATE action_items
+            SET status = 'resolved',
+                resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP)
+            WHERE action_key = :key
+              AND status <> 'resolved'
+            """
+        ),
+        {
+            "key": key
+        },
+    )
+
 
 def _detect_action_items(session: Session) -> None:
     """Detect unpaid rent and utility-payment changes, persisting any newly
@@ -839,6 +859,7 @@ def _detect_action_items(session: Session) -> None:
         text("SELECT id, alias, payment_day FROM rental_properties WHERE payment_day IS NOT NULL")
     ).fetchall()
     for prop_id, alias, payment_day in properties:
+        key = f"rent_unpaid:{prop_id}:{current_month}"
         if today_day < payment_day:
             continue
         paid = session.execute(
@@ -851,10 +872,28 @@ def _detect_action_items(session: Session) -> None:
             ),
             {"pid": prop_id, "month": current_month},
         ).fetchone()
-        if paid is None:
-            key = f"rent_unpaid:{prop_id}:{current_month}"
-            message = f"Rent for {alias} hasn't been paid for {current_month}."
-            _upsert_action_item(session, key, "rent_unpaid", prop_id, current_month, message)
+
+        if paid is not None:
+            _resolve_action_item(
+                session,
+                key,
+                f"Rent for {alias} was paid for {current_month}.",
+            )
+            continue
+
+        # Do not create an action before the due date.
+        if today_day < payment_day:
+            continue
+
+        message = f"Rent for {alias} hasn't been paid for {current_month}."
+        _upsert_action_item(
+            session,
+            key,
+            "rent_unpaid",
+            prop_id,
+            current_month,
+            message,
+        )
 
     # 2) Utility payment changed: >=5% month-over-month change for the same
     # vendor (derived from the Utilities category keyword list) and property.
