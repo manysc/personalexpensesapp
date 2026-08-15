@@ -33,6 +33,35 @@ services:
       seaweedfs:
         condition: service_healthy
 
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    environment:
+      POSTGRES_USER: salas
+      POSTGRES_PASSWORD: salas
+      POSTGRES_DB: expensesassistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks:
+      - pg_network
+
+  pg_admin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=manuel.salasc@gmail.com
+      - PGADMIN_DEFAULT_PASSWORD=salas
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - pg_network
+
   # S3-compatible object storage (SeaweedFS) for bank statements/receipts.
   # Not published to the network/LAN. The S3 port is bound to 127.0.0.1 only
   # so a host-run `uvicorn` (local dev, no Dockerfile.backend) can reach it
@@ -97,5 +126,11 @@ services:
     restart: unless-stopped
 
 volumes:
+  pgdata:
   seaweedfs_data:
   seaweedfs_admin_data:
+  pgadmin_data:
+
+networks:
+  pg_network:
+    driver: bridge
