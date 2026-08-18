@@ -115,6 +115,7 @@ services:
       dockerfile: Dockerfile.backup
     command: ["--loop"]
     environment:
+      S3_ENDPOINT_URL: http://seaweedfs:8333
       S3_CONFIG_PATH: /app/s3.json
       S3_BACKUP_INTERVAL_DAYS: ${S3_BACKUP_INTERVAL_DAYS:-30}
     volumes:
