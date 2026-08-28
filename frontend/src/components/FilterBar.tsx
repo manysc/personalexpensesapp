@@ -106,6 +106,9 @@ export default function FilterBar({ onApply, initialValues, onExportPdf, exporti
                 {c}
               </option>
             ))}
+            {!categories.includes("Other") && (
+              <option value="Other">Other</option>
+            )}
           </select>
         </div>
 
