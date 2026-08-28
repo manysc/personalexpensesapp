@@ -1,0 +1,5 @@
+FROM postgres:latest
+WORKDIR /app
+COPY scripts/backup_postgres_db.sh /app/backup_postgres_db.sh
+RUN chmod +x /app/backup_postgres_db.sh
+ENTRYPOINT ["/app/backup_postgres_db.sh"]
