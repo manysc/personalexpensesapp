@@ -37,13 +37,19 @@ services:
     image: postgres:latest
     container_name: postgres
     environment:
-      POSTGRES_USER: salas
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: salas
       POSTGRES_DB: expensesassistant
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d expensesassistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     networks:
       - pg_network
 
@@ -51,7 +57,7 @@ services:
     image: dpage/pgadmin4:latest
     container_name: pgadmin
     environment:
-      - PGADMIN_DEFAULT_EMAIL=manuel.salasc@gmail.com
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=salas
     ports:
       - "5050:80"
@@ -67,7 +73,7 @@ services:
   # so a host-run `uvicorn` (local dev, no Dockerfile.backend) can reach it
   # at http://localhost:8333; other containers reach it at http://seaweedfs:8333.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.39
+    image: chrislusf/seaweedfs:latest
     command: >-
       server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/identities.json
       -master.port=9333 -volume.port=8080 -filer=true -filer.port=8888
@@ -91,7 +97,7 @@ services:
   # Change the default admin/admin login via SEAWEEDFS_ADMIN_USER /
   # SEAWEEDFS_ADMIN_PASSWORD env vars (e.g. in a local .env override).
   seaweedfs-admin:
-    image: chrislusf/seaweedfs:4.39
+    image: chrislusf/seaweedfs:latest
     command: >-
       admin -port=23646 -master=seaweedfs:9333 -dataDir=/data
       -adminUser=${SEAWEEDFS_ADMIN_USER:-admin}
@@ -124,6 +130,31 @@ services:
     depends_on:
       seaweedfs:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Periodically backs up the "expensesassistant" postgres database to a
+  # local timestamped gzip-compressed SQL dump under ./backups/postgres/.
+  # Runs once immediately, then repeats every POSTGRES_BACKUP_INTERVAL_DAYS
+  # (default 30, override via a .env POSTGRES_BACKUP_INTERVAL_DAYS=<days>).
+  pg-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.pg-backup
+    command: ["--loop"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: salas
+      PGDATABASE: expensesassistant
+      POSTGRES_BACKUP_INTERVAL_DAYS: ${POSTGRES_BACKUP_INTERVAL_DAYS:-30}
+    volumes:
+      - ./backups/postgres:/app/backups/postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pg_network
     restart: unless-stopped
 
 volumes:
