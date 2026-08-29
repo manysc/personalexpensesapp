@@ -412,6 +412,8 @@ class ExpenseUpdateRequest(BaseModel):
     balanced_date: Optional[str] = None
     amortize_months: Optional[int] = Field(default=None, ge=1, le=36)
     amortize_start_date: Optional[str] = None
+    debit: Optional[Decimal] = None
+    credit: Optional[Decimal] = None
 
 
 class ExpenseListResponse(BaseModel):
@@ -1026,6 +1028,17 @@ def update_expense(
         updated = True
     if "amortize_start_date" in body.model_fields_set:
         row.amortize_start_date = body.amortize_start_date
+        updated = True
+    if "debit" in body.model_fields_set or "credit" in body.model_fields_set:
+        if row.bank != "cash":
+            raise HTTPException(
+                status_code=400,
+                detail="Debit/credit can only be edited for cash expenses.",
+            )
+        if "debit" in body.model_fields_set:
+            row.debit = body.debit
+        if "credit" in body.model_fields_set:
+            row.credit = body.credit
         updated = True
 
     if updated:

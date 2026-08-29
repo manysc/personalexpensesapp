@@ -18,6 +18,14 @@ const MONTH_LABELS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+function formatAmount(value: number | null): string {
+  if (value === null) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(value);
+}
+
 function formatAmortizationSummary(
   months: number | null,
   startDate: string,
@@ -46,8 +54,11 @@ function formatAmortizationSummary(
 export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const router = useRouter();
   const [overridden, setOverridden] = useState(expense.overridden);
+  const isCash = expense.bank === "cash";
 
   // Committed values (shown in view mode)
+  const [debit, setDebit] = useState<number | null>(expense.debit);
+  const [credit, setCredit] = useState<number | null>(expense.credit);
   const [category, setCategory] = useState(expense.category ?? "");
   const [propertyId, setPropertyId] = useState<number | null>(expense.property_id);
   const [vehicleId, setVehicleId] = useState<number | null>(expense.vehicle_id);
@@ -57,6 +68,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   const [amortizeStartDate, setAmortizeStartDate] = useState(expense.amortize_start_date ?? "");
 
   // Draft values (used while editing)
+  const [draftDebit, setDraftDebit] = useState<string>(expense.debit != null ? String(expense.debit) : "");
+  const [draftCredit, setDraftCredit] = useState<string>(expense.credit != null ? String(expense.credit) : "");
   const [draftCategory, setDraftCategory] = useState(category);
   const [draftPropertyId, setDraftPropertyId] = useState<string>(
     expense.property_id != null ? String(expense.property_id) : ""
@@ -107,6 +120,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
   }, [editing]);
 
   function handleEdit() {
+    setDraftDebit(debit != null ? String(debit) : "");
+    setDraftCredit(credit != null ? String(credit) : "");
     setDraftCategory(category);
     setDraftPropertyId(propertyId != null ? String(propertyId) : "");
     setDraftVehicleId(vehicleId != null ? String(vehicleId) : "");
@@ -150,6 +165,10 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
         amortize_months: draftAmortizeMonths ? Number(draftAmortizeMonths) : null,
         amortize_start_date: draftAmortizeMonths ? draftAmortizeStartDate || null : null,
       };
+      if (isCash) {
+        body.debit = draftDebit ? Number(draftDebit) : null;
+        body.credit = draftCredit ? Number(draftCredit) : null;
+      }
       const res = await fetch(`/api/expenses/${expense.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -157,6 +176,8 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
       });
       if (!res.ok) throw new Error(`Error ${res.status}: ${res.statusText}`);
       const updated: Expense = await res.json();
+      setDebit(updated.debit);
+      setCredit(updated.credit);
       setCategory(updated.category ?? "");
       setPropertyId(updated.property_id);
       setVehicleId(updated.vehicle_id);
@@ -277,6 +298,44 @@ export default function ExpenseDetailCard({ expense, staticFields }: Props) {
             <dd className="text-sm text-gray-900 col-span-2 break-words">{value}</dd>
           </div>
         ))}
+
+        {/* Debit */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+          <dt className="text-sm font-medium text-gray-500">Debit</dt>
+          <dd className="col-span-2">
+            {editing && isCash ? (
+              <input
+                type="number"
+                step="0.01"
+                value={draftDebit}
+                onChange={(e) => setDraftDebit(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              />
+            ) : (
+              <span className="text-sm text-gray-900">{formatAmount(debit)}</span>
+            )}
+          </dd>
+        </div>
+
+        {/* Credit */}
+        <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
+          <dt className="text-sm font-medium text-gray-500">Credit</dt>
+          <dd className="col-span-2">
+            {editing && isCash ? (
+              <input
+                type="number"
+                step="0.01"
+                value={draftCredit}
+                onChange={(e) => setDraftCredit(e.target.value)}
+                className={inputClass}
+                disabled={saving}
+              />
+            ) : (
+              <span className="text-sm text-gray-900">{formatAmount(credit)}</span>
+            )}
+          </dd>
+        </div>
 
         {/* Category */}
         <div className="px-6 py-4 grid grid-cols-3 gap-4 items-center">
