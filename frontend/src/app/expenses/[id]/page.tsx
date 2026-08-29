@@ -16,14 +16,6 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-function formatAmount(value: number | null): string {
-  if (value === null) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
-
 export default async function ExpenseDetailPage({ params }: PageProps) {
   const { id } = await params;
   const expense = await getExpense(id);
@@ -32,8 +24,6 @@ export default async function ExpenseDetailPage({ params }: PageProps) {
     { label: "Date", value: expense.date },
     { label: "Bank", value: expense.bank },
     { label: "Description", value: expense.description },
-    { label: "Debit", value: formatAmount(expense.debit) },
-    { label: "Credit", value: formatAmount(expense.credit) },
   ];
 
   return (
