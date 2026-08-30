@@ -25,6 +25,21 @@ const EMPTY: ExpenseFilters = {
 const inputClass =
   "w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
+const monthOf = (dateStr: string): string => (dateStr ? dateStr.slice(0, 7) : "");
+
+// Shows the shared month only when From/To agree, so it reflects manual date edits too.
+function deriveMonth(dateFrom: string, dateTo: string): string {
+  const mFrom = monthOf(dateFrom);
+  const mTo = monthOf(dateTo);
+  if (mFrom && mTo) return mFrom === mTo ? mFrom : "";
+  return mFrom || mTo;
+}
+
+function lastDayOfMonth(month: string): string {
+  const [year, monthNum] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthNum, 0)).toISOString().slice(0, 10);
+}
+
 export default function FilterBar({ onApply, initialValues, onExportPdf, exporting }: Props) {
   const [draft, setDraft] = useState<ExpenseFilters>(initialValues ?? EMPTY);
   const [banks, setBanks] = useState<string[]>([]);
@@ -55,6 +70,17 @@ export default function FilterBar({ onApply, initialValues, onExportPdf, exporti
     (field: keyof ExpenseFilters) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setDraft((prev) => ({ ...prev, [field]: e.target.value }));
+
+  const monthValue = deriveMonth(draft.date_from, draft.date_to);
+
+  const handleMonthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const month = e.target.value;
+    setDraft((prev) => ({
+      ...prev,
+      date_from: month ? `${month}-01` : "",
+      date_to: month ? lastDayOfMonth(month) : "",
+    }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,6 +136,18 @@ export default function FilterBar({ onApply, initialValues, onExportPdf, exporti
               <option value="Other">Other</option>
             )}
           </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Month
+          </label>
+          <input
+            type="month"
+            value={monthValue}
+            onChange={handleMonthChange}
+            className={inputClass}
+          />
         </div>
 
         <div>
