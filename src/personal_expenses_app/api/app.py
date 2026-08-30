@@ -571,6 +571,7 @@ def list_expenses(
 class SummaryItem(BaseModel):
     month: str
     category: str
+    property: Optional[str] = None
     total: float
 
 
@@ -629,13 +630,16 @@ def expenses_summary(
     date_to: Optional[str] = Query(default=None, description="Include expenses on or before this date (YYYY-MM-DD)"),
     session: Session = Depends(get_session),
 ):
-    """Return total net expenses (debit - credit) grouped by month (YYYY-MM) and category.
+    """Return total net expenses (debit - credit) grouped by month (YYYY-MM), category, and rental property.
 
     Expenses with `amortize_months` > 1 are spread evenly across that many
     months starting at `amortize_start_date` (falling back to `balanced_date`,
     then `date`), so a single transaction can contribute a fraction of its
     total to several consecutive months. Date filters are applied against the
     resulting (post-amortization) month, not the original transaction date.
+    `property` is the linked rental property's alias, or null when the expense
+    isn't linked to one; summing `total` across `property` for a given
+    month/category reproduces the previous property-agnostic totals.
     """
     conditions = []
     params: dict = {}
@@ -653,6 +657,7 @@ def expenses_summary(
         WITH amort AS (
             SELECT
                 category,
+                property_id,
                 (
                     CASE WHEN debit IS NULL OR debit = 'NaN'::numeric THEN 0 ELSE debit END
                     - CASE WHEN credit IS NULL OR credit = 'NaN'::numeric THEN 0 ELSE credit END
@@ -665,6 +670,7 @@ def expenses_summary(
         expanded AS (
             SELECT
                 a.category,
+                a.property_id,
                 date_trunc('month', a.start_date) + (gs.n || ' month')::interval AS month_date,
                 CASE
                     WHEN gs.n < a.months - 1 THEN round(a.net / a.months, 2)
@@ -674,13 +680,15 @@ def expenses_summary(
             CROSS JOIN LATERAL generate_series(0, a.months - 1) AS gs(n)
         )
         SELECT
-            to_char(month_date, 'YYYY-MM') AS month,
-            category,
-            SUM(amount)::float AS total
+            to_char(expanded.month_date, 'YYYY-MM') AS month,
+            expanded.category,
+            p.alias AS property,
+            SUM(expanded.amount)::float AS total
         FROM expanded
+        LEFT JOIN rental_properties p ON expanded.property_id = p.id
         WHERE {where_clause}
-        GROUP BY 1, 2
-        ORDER BY 1, 2
+        GROUP BY 1, 2, 3
+        ORDER BY 1, 2, 3
     """)
 
     rows = session.execute(sql, params).fetchall()
@@ -695,7 +703,8 @@ def expenses_summary(
         {
             "month": r[0],
             "category": r[1],
-            "total": safe_float(r[2]),
+            "property": r[2],
+            "total": safe_float(r[3]),
         }
         for r in rows
     ]
