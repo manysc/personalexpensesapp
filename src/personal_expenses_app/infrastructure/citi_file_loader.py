@@ -237,6 +237,13 @@ class CitiFileLoader:
                         skip_next_line = False
                         continue
 
+                    # Skip lodging folio metadata lines (e.g. GREAT WOLF LDG reservations span
+                    # "PHONE NUMBER:", "FOLIO NUMBER:", "ARRIVE: MM/DD/YY DEPART: MM/DD/YY" before
+                    # the amount). These are not merchant descriptions and must not be mistaken for
+                    # one, nor reset/replace whatever description is currently pending.
+                    if re.match(r"^(PHONE NUMBER:|FOLIO NUMBER:|ARRIVE:\s*\d{1,2}/\d{1,2}/\d{2,4}\s+DEPART:)", line_stripped, re.IGNORECASE):
+                        continue
+
                     # Detect cardholder sections
                     if "MANUEL SALAS" in line and "Card ending in" not in line:
                         current_cardholder = "MANUEL SALAS"
@@ -329,6 +336,35 @@ class CitiFileLoader:
                                 transactions.append(transaction)
                                 logger.debug(f"Parsed foreign currency transaction for {current_cardholder}: {transaction}")
                         # Always clear pending_description and skip to next line after processing MEXICAN PESO line
+                        pending_description = None
+                        continue
+
+                    # A bare amount with no leading date (e.g. the lodging folio total that follows
+                    # the ARRIVE/DEPART metadata lines) belongs to whatever description is pending.
+                    amount_only_match = re.match(r"^(-?\$?[\d,]+\.\d{2})\s*$", line_stripped)
+                    if amount_only_match and pending_description:
+                        amount_str = amount_only_match.group(1)
+                        amount = float(amount_str.replace(",", "").replace("$", ""))
+
+                        desc_match = re.match(r"^(\d{1,2}/\d{1,2})\s+(?:\d{1,2}/\d{1,2}\s+)?(.*)", pending_description)
+                        if desc_match:
+                            transaction_date = desc_match.group(1)
+                            description = desc_match.group(2).strip()
+
+                            transaction = {
+                                "Date": f"{transaction_date}/{year}",
+                                "Description": description,
+                                "Debit": amount if amount >= 0 else None,
+                                "Credit": abs(amount) if amount < 0 else None,
+                            }
+
+                            trans_month = int(transaction_date.split("/")[0])
+                            if trans_month > statement_month_num:
+                                prev_year = str(int(year) - 1)
+                                transaction["Date"] = transaction["Date"].replace(f"/{year}", f"/{prev_year}")
+
+                            transactions.append(transaction)
+                            logger.debug(f"Parsed folio transaction for {current_cardholder}: {transaction}")
                         pending_description = None
                         continue
 
