@@ -97,159 +97,166 @@ export default function FilterBar({ onApply, initialValues, onExportPdf, exporti
       onSubmit={handleSubmit}
       className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
     >
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Row 1 */}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Bank
-          </label>
-          <select
-            value={draft.bank}
-            onChange={set("bank")}
-            className={inputClass}
-          >
-            <option value="">All banks</option>
-            {banks.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Bank
+            </label>
+            <select
+              value={draft.bank}
+              onChange={set("bank")}
+              className={inputClass}
+            >
+              <option value="">All banks</option>
+              {banks.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Category
+            </label>
+            <select
+              value={draft.category}
+              onChange={set("category")}
+              className={inputClass}
+            >
+              <option value="">All categories</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              {!categories.includes("Other") && (
+                <option value="Other">Other</option>
+              )}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Property
+            </label>
+            <select
+              value={draft.property_id}
+              onChange={set("property_id")}
+              className={inputClass}
+            >
+              <option value="">All properties</option>
+              {properties.map((p) => (
+                <option key={p.id} value={String(p.id)}>
+                  {p.alias}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Vehicle
+            </label>
+            <select
+              value={draft.vehicle_id}
+              onChange={set("vehicle_id")}
+              className={inputClass}
+            >
+              <option value="">All vehicles</option>
+              {vehicles.map((v) => (
+                <option key={v.id} value={String(v.id)}>
+                  {v.alias}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Category
-          </label>
-          <select
-            value={draft.category}
-            onChange={set("category")}
-            className={inputClass}
-          >
-            <option value="">All categories</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-            {!categories.includes("Other") && (
-              <option value="Other">Other</option>
-            )}
-          </select>
+        {/* Kept as one unit so Month, From, and To are always adjacent regardless of viewport width */}
+        <div className="rounded-md border border-gray-100 bg-gray-50/80 p-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Month
+              </label>
+              <input
+                type="month"
+                value={monthValue}
+                onChange={handleMonthChange}
+                className={inputClass}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                From
+              </label>
+              <input
+                type="date"
+                value={draft.date_from}
+                onChange={set("date_from")}
+                className={inputClass}
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                To
+              </label>
+              <input
+                type="date"
+                value={draft.date_to}
+                onChange={set("date_to")}
+                className={inputClass}
+              />
+            </div>
+          </div>
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Month
-          </label>
-          <input
-            type="month"
-            value={monthValue}
-            onChange={handleMonthChange}
-            className={inputClass}
-          />
-        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Description
+            </label>
+            <input
+              type="text"
+              value={draft.description}
+              onChange={set("description")}
+              placeholder="Search description…"
+              className={inputClass}
+            />
+          </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            From
-          </label>
-          <input
-            type="date"
-            value={draft.date_from}
-            onChange={set("date_from")}
-            className={inputClass}
-          />
-        </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Comments
+            </label>
+            <input
+              type="text"
+              value={draft.comments}
+              onChange={set("comments")}
+              placeholder="Search comments…"
+              className={inputClass}
+            />
+          </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            To
-          </label>
-          <input
-            type="date"
-            value={draft.date_to}
-            onChange={set("date_to")}
-            className={inputClass}
-          />
-        </div>
-
-        {/* Row 2 */}
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Description
-          </label>
-          <input
-            type="text"
-            value={draft.description}
-            onChange={set("description")}
-            placeholder="Search description…"
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Comments
-          </label>
-          <input
-            type="text"
-            value={draft.comments}
-            onChange={set("comments")}
-            placeholder="Search comments…"
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Property
-          </label>
-          <select
-            value={draft.property_id}
-            onChange={set("property_id")}
-            className={inputClass}
-          >
-            <option value="">All properties</option>
-            {properties.map((p) => (
-              <option key={p.id} value={String(p.id)}>
-                {p.alias}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Vehicle
-          </label>
-          <select
-            value={draft.vehicle_id}
-            onChange={set("vehicle_id")}
-            className={inputClass}
-          >
-            <option value="">All vehicles</option>
-            {vehicles.map((v) => (
-              <option key={v.id} value={String(v.id)}>
-                {v.alias}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2 pt-5">
-          <input
-            id="overridden_only"
-            type="checkbox"
-            checked={draft.overridden_only}
-            onChange={(e) =>
-              setDraft((prev) => ({ ...prev, overridden_only: e.target.checked }))
-            }
-            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
-          <label htmlFor="overridden_only" className="text-sm text-gray-700">
-            Manually edited only
-          </label>
+          <div className="flex items-center gap-2 pt-5">
+            <input
+              id="overridden_only"
+              type="checkbox"
+              checked={draft.overridden_only}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, overridden_only: e.target.checked }))
+              }
+              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="overridden_only" className="text-sm text-gray-700">
+              Manually edited only
+            </label>
+          </div>
         </div>
       </div>
 
