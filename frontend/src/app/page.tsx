@@ -181,12 +181,10 @@ export default function DashboardPage() {
   }
   const propGrandTotal = propTableMonths.reduce((s, m) => s + propRowTotals[m], 0);
 
-  // Summary table — uses full (unfiltered) data so category selection doesn't affect it
+  // Summary table — always lists all months/categories from unfiltered data,
+  // but columns shown and Net are scoped to selectedCategories (chip filter)
   const tableMonths = Array.from(new Set(data.map((d) => d.month))).sort();
   const tableCategories = Array.from(new Set(data.map((d) => d.category))).sort();
-  const expenseCategories = tableCategories.filter(
-    (c) => !POSITIVE_CATEGORIES.has(c) && c !== TRANSFER_CATEGORY
-  );
   // lookup[month][category] = total
   const lookup: Record<string, Record<string, number>> = {};
   for (const item of data) {
@@ -197,12 +195,19 @@ export default function DashboardPage() {
   for (const cat of tableCategories) {
     colTotals[cat] = tableMonths.reduce((s, m) => s + (lookup[m]?.[cat] ?? 0), 0);
   }
+  const displayCategories =
+    selectedCategories.length === 0
+      ? tableCategories
+      : tableCategories.filter((c) => selectedCategories.includes(c));
+  const displayExpenseCategories = displayCategories.filter(
+    (c) => !POSITIVE_CATEGORIES.has(c) && c !== TRANSFER_CATEGORY
+  );
   const netByMonth: Record<string, number> = {};
   for (const m of tableMonths) {
-    const positiveSum = tableCategories
+    const positiveSum = displayCategories
       .filter((c) => POSITIVE_CATEGORIES.has(c))
       .reduce((s, c) => s - (lookup[m]?.[c] ?? 0), 0);
-    const expenseSum = expenseCategories.reduce((s, c) => s + (lookup[m]?.[c] ?? 0), 0);
+    const expenseSum = displayExpenseCategories.reduce((s, c) => s + (lookup[m]?.[c] ?? 0), 0);
     netByMonth[m] = positiveSum - expenseSum;
   }
   const grandNet = tableMonths.reduce((s, m) => s + netByMonth[m], 0);
@@ -417,7 +422,7 @@ export default function DashboardPage() {
               <thead>
                 <tr className="bg-gray-50 border-y border-gray-200">
                   <th className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-left font-semibold text-gray-600">Month</th>
-                  {tableCategories.map((cat) => (
+                  {displayCategories.map((cat) => (
                     <th key={cat} className="px-4 py-2 text-right font-semibold text-gray-600 whitespace-nowrap">{cat}</th>
                   ))}
                   <th className="px-4 py-2 text-right font-semibold text-gray-900 whitespace-nowrap border-l border-gray-200">Net</th>
@@ -429,7 +434,7 @@ export default function DashboardPage() {
                   return (
                     <tr key={month} className="hover:bg-gray-50">
                       <td className="sticky left-0 z-10 bg-white hover:bg-gray-50 px-4 py-2 font-medium text-gray-700 whitespace-nowrap">{month}</td>
-                      {tableCategories.map((cat) => {
+                      {displayCategories.map((cat) => {
                         const v = lookup[month]?.[cat];
                         const isPositive = POSITIVE_CATEGORIES.has(cat) && v !== undefined && v < 0;
                         return (
@@ -450,7 +455,7 @@ export default function DashboardPage() {
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
                   <td className="sticky left-0 z-10 bg-gray-50 px-4 py-2 text-gray-700">Total</td>
-                  {tableCategories.map((cat) => {
+                  {displayCategories.map((cat) => {
                     const v = colTotals[cat] ?? 0;
                     const isPositive = POSITIVE_CATEGORIES.has(cat) && v < 0;
                     return (
