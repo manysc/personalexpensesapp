@@ -16,6 +16,7 @@ import {
 interface SummaryItem {
   month: string;
   category: string;
+  property: string | null;
   total: number;
 }
 
@@ -71,6 +72,10 @@ function pivot(items: SummaryItem[]): { rows: ChartRow[]; categories: string[] }
 const INCOME_CATEGORY = "Income";
 const TRANSFER_CATEGORY = "Transfers";
 const POSITIVE_CATEGORIES = new Set(["Income", "Real State"]);
+// Categories whose totals can be further narrowed down to a specific rental property
+const PROPERTY_FILTERABLE_CATEGORIES = new Set(["Home Improvement", "Real State"]);
+// Pseudo-property standing in for expenses in those categories with no linked rental property (personal home)
+const PERSONAL_PROPERTY_LABEL = "Personal Home";
 
 function fmt(v: number): string {
   return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
@@ -85,6 +90,7 @@ export default function DashboardPage() {
   const [appliedFrom, setAppliedFrom] = useState("");
   const [appliedTo, setAppliedTo] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedProperties, setSelectedProperties] = useState<string[]>([]);
   const [comments, setComments] = useState<CommentedExpense[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [propertyData, setPropertyData] = useState<PropertySummaryItem[]>([]);
@@ -92,6 +98,22 @@ export default function DashboardPage() {
 
   // All categories available from the full data set
   const allCategories = Array.from(new Set(data.map((d) => d.category))).sort();
+  // Properties available for the property-filterable categories, from the full data set
+  // (expenses with no linked property surface as PERSONAL_PROPERTY_LABEL, trailing the real aliases)
+  const propertyOptions = (() => {
+    const names = new Set(
+      data
+        .filter((d) => PROPERTY_FILTERABLE_CATEGORIES.has(d.category))
+        .map((d) => d.property ?? PERSONAL_PROPERTY_LABEL)
+    );
+    const sorted = Array.from(names).sort();
+    return sorted.includes(PERSONAL_PROPERTY_LABEL)
+      ? [...sorted.filter((p) => p !== PERSONAL_PROPERTY_LABEL), PERSONAL_PROPERTY_LABEL]
+      : sorted;
+  })();
+  const showPropertyFilter =
+    propertyOptions.length > 0 &&
+    selectedCategories.some((c) => PROPERTY_FILTERABLE_CATEGORIES.has(c));
 
   useEffect(() => {
     let cancelled = false;
@@ -111,6 +133,7 @@ export default function DashboardPage() {
         if (!cancelled) {
           setData(json);
           setSelectedCategories([]);
+          setSelectedProperties([]);
           setLoading(false);
         }
       })
@@ -142,10 +165,20 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [appliedFrom, appliedTo]);
 
+  // Rows for the two property-filterable categories are narrowed to selectedProperties (null property matches PERSONAL_PROPERTY_LABEL); other categories pass through
+  const propertyFilteredData =
+    selectedProperties.length === 0
+      ? data
+      : data.filter(
+          (d) =>
+            !PROPERTY_FILTERABLE_CATEGORIES.has(d.category) ||
+            selectedProperties.includes(d.property ?? PERSONAL_PROPERTY_LABEL)
+        );
+
   const filteredData =
     selectedCategories.length === 0
-      ? data
-      : data.filter((d) => selectedCategories.includes(d.category));
+      ? propertyFilteredData
+      : propertyFilteredData.filter((d) => selectedCategories.includes(d.category));
 
   const { rows, categories } = pivot(filteredData);
 
@@ -182,14 +215,15 @@ export default function DashboardPage() {
   const propGrandTotal = propTableMonths.reduce((s, m) => s + propRowTotals[m], 0);
 
   // Summary table — always lists all months/categories from unfiltered data,
-  // but columns shown and Net are scoped to selectedCategories (chip filter)
-  const tableMonths = Array.from(new Set(data.map((d) => d.month))).sort();
-  const tableCategories = Array.from(new Set(data.map((d) => d.category))).sort();
+  // but columns shown and Net are scoped to selectedCategories (chip filter);
+  // values within Home Improvement/Real State are further scoped to selectedProperties
+  const tableMonths = Array.from(new Set(propertyFilteredData.map((d) => d.month))).sort();
+  const tableCategories = Array.from(new Set(propertyFilteredData.map((d) => d.category))).sort();
   // lookup[month][category] = total
   const lookup: Record<string, Record<string, number>> = {};
-  for (const item of data) {
+  for (const item of propertyFilteredData) {
     if (!lookup[item.month]) lookup[item.month] = {};
-    lookup[item.month][item.category] = item.total;
+    lookup[item.month][item.category] = (lookup[item.month][item.category] ?? 0) + item.total;
   }
   const colTotals: Record<string, number> = {};
   for (const cat of tableCategories) {
@@ -218,6 +252,12 @@ export default function DashboardPage() {
     );
   };
 
+  const toggleProperty = (prop: string) => {
+    setSelectedProperties((prev) =>
+      prev.includes(prop) ? prev.filter((p) => p !== prop) : [...prev, prop]
+    );
+  };
+
   const handleApply = () => {
     setAppliedFrom(dateFrom);
     setAppliedTo(dateTo);
@@ -229,6 +269,7 @@ export default function DashboardPage() {
     setAppliedFrom("");
     setAppliedTo("");
     setSelectedCategories([]);
+    setSelectedProperties([]);
   };
 
   // Group comments by month (YYYY-MM) or by exact date when a single day is selected
@@ -339,6 +380,48 @@ export default function DashboardPage() {
                   }}
                 >
                   {cat}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Property sub-filter, scoped to Home Improvement / Real State */}
+      {showPropertyFilter && (
+        <div className="print:hidden rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-600">
+              Filter by property (Home Improvement / Real State)
+              {selectedProperties.length > 0 && (
+                <span className="ml-2 text-blue-600">({selectedProperties.length} selected)</span>
+              )}
+            </span>
+            {selectedProperties.length > 0 && (
+              <button
+                onClick={() => setSelectedProperties([])}
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {propertyOptions.map((prop, i) => {
+              const active = selectedProperties.length === 0 || selectedProperties.includes(prop);
+              const color = PALETTE[(i + 10) % PALETTE.length];
+              return (
+                <button
+                  key={prop}
+                  onClick={() => toggleProperty(prop)}
+                  className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                  style={{
+                    borderColor: color,
+                    backgroundColor: active ? color : "transparent",
+                    color: active ? "#fff" : color,
+                  }}
+                >
+                  {prop}
                 </button>
               );
             })}
