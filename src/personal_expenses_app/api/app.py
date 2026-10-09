@@ -1430,12 +1430,8 @@ class SyncExpensesResponse(BaseModel):
     updated: int
 
 
-@app.post("/rental-properties/{property_id}/sync-expenses", response_model=SyncExpensesResponse)
-def sync_expenses_by_tenant(
-    property_id: int,
-    session: Session = Depends(get_session),
-):
-    """Find expenses whose description contains keywords from the tenant name and assign this property to them.
+def _sync_property_by_tenant(session: Session, prop: "_RentalProperty") -> int:
+    """Assign prop to expenses whose description contains keywords from its tenant name.
 
     The tenant string is split on whitespace and '&'; each token of 2+ characters
     is matched case-insensitively against the expense description.
@@ -1445,20 +1441,21 @@ def sync_expenses_by_tenant(
     name alone would be ambiguous, so in that case the first name AND at least
     one other token (e.g. the last name) must both be present (AND logic) to
     disambiguate between the two tenants.
-    """
-    prop = session.get(_RentalProperty, property_id)
-    if prop is None:
-        raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
-    if not prop.tenant:
-        return SyncExpensesResponse(updated=0)
 
-    import re
+    Only expenses with no property yet are touched, so a manual assignment is
+    never overwritten. Returns the number of expenses updated.
+    """
+    if not prop.tenant:
+        return 0
+
     from sqlalchemy import and_, func, or_, update as sa_update
+
+    property_id = prop.id
 
     # Split on whitespace and '&', keep only tokens with 2+ characters
     keywords = [t.lower() for t in re.split(r"[\s&]+", prop.tenant.strip()) if len(t) >= 2]
     if not keywords:
-        return SyncExpensesResponse(updated=0)
+        return 0
 
     conditions = [
         func.lower(_AllExpense.description).contains(kw)
@@ -1483,13 +1480,25 @@ def sync_expenses_by_tenant(
 
     stmt = (
         sa_update(_AllExpense)
-        .where(match_condition)
+        .where(match_condition, _AllExpense.property_id.is_(None))
         .values(property_id=property_id)
         .execution_options(synchronize_session="fetch")
     )
     result = session.execute(stmt)
     session.commit()
-    return SyncExpensesResponse(updated=result.rowcount)
+    return result.rowcount  # type: ignore[attr-defined]
+
+
+@app.post("/rental-properties/{property_id}/sync-expenses", response_model=SyncExpensesResponse)
+def sync_expenses_by_tenant(
+    property_id: int,
+    session: Session = Depends(get_session),
+):
+    """Link unassigned expenses to this property based on its tenant name (see _sync_property_by_tenant)."""
+    prop = session.get(_RentalProperty, property_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail=f"Rental property {property_id} not found.")
+    return SyncExpensesResponse(updated=_sync_property_by_tenant(session, prop))
 
 
 @app.delete("/rental-properties/{property_id}", status_code=204)
@@ -1703,6 +1712,26 @@ class PipelineRunRequest(BaseModel):
     banamex_months: list[str] = []
 
 
+def _load_category_keywords() -> Optional[dict[str, list[str]]]:
+    """Return {category: keywords} from the categories table, in id order (first match wins).
+
+    Returns None when the table is empty so the categorizer falls back to the
+    hardcoded RULE_BASED_CATEGORIES.
+    """
+    with Session(_get_engine()) as session:
+        rows = session.execute(select(_Category).order_by(_Category.id)).scalars().all()
+        return {str(r.name): json.loads(r.keywords or "[]") for r in rows} or None  # type: ignore[arg-type]
+
+
+def _link_properties_by_tenant() -> int:
+    """Link unassigned expenses to every rental property that has a tenant."""
+    total = 0
+    with Session(_get_engine()) as session:
+        for prop in session.execute(select(_RentalProperty)).scalars().all():
+            total += _sync_property_by_tenant(session, prop)
+    return total
+
+
 @app.post("/pipeline/run")
 def run_pipeline(body: PipelineRunRequest):
     q: queue.Queue = queue.Queue()
@@ -1727,7 +1756,7 @@ def run_pipeline(body: PipelineRunRequest):
         wf_loader = WellsfargoFileLoader()
         chase_loader = ChaseFileLoader()
         banamex_loader = BanamexFileLoader()
-        categorizer = RuleBasedExpenseCategorizer()
+        categorizer = RuleBasedExpenseCategorizer(_load_category_keywords())
         db = ExpenseDbPersistence()
         summarizer = Summarizer()
         user = UserInteraction()
@@ -1772,6 +1801,8 @@ def run_pipeline(body: PipelineRunRequest):
             all_labeled.append(labeled)
 
         if all_labeled:
+            linked = _link_properties_by_tenant()
+            print(f"Linked {linked} expense(s) to rental properties by tenant.")
             combined_all = pd.concat(all_labeled, ignore_index=True).drop_duplicates()
             for (year_val, month_val), group in combined_all.groupby(
                 [combined_all["Date"].dt.year, combined_all["Date"].dt.month]

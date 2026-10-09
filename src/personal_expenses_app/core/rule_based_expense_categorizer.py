@@ -141,6 +141,7 @@ RULE_BASED_CATEGORIES: dict[str, list[str]] = {
         "Payment From Yolanda", "Payment From Carmen",
         "Payment From Yesenia", "Payment From Noe", "Payment From Jose",
         "Payment From Allan", "Payment From Dba Liliana Ocano",
+        "Payment From Veronica",
     ],
     "Transfers": [
         "AUTOPAY AUTO-PMT", "Citi Autopay Payment",
@@ -162,8 +163,9 @@ RULE_BASED_CATEGORIES: dict[str, list[str]] = {
 
 
 class RuleBasedExpenseCategorizer:
-    def __init__(self):
+    def __init__(self, categories: dict[str, list[str]] | None = None):
         super().__init__()
+        self._categories = categories if categories else RULE_BASED_CATEGORIES
 
     @staticmethod
     def _log_uncategorized_expense(row):
@@ -189,11 +191,10 @@ class RuleBasedExpenseCategorizer:
             f"Category: {row['Category']}"
         )
 
-    @staticmethod
-    def _rule_based_categorization(row):
+    def _rule_based_categorization(self, row):
         description = row["Description"]
         desc = str(description)
-        for cat, keywords in RULE_BASED_CATEGORIES.items():
+        for cat, keywords in self._categories.items():
             for k in keywords:
                 if k in desc:
                     return cat
