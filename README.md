@@ -1,62 +1,234 @@
 # personalexpensesapp
-Load and analyze personal expenses from bank accounts
 
-Run Backend
-(Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& c:\Users\salas\VSCodeProjects\github\personalexpensesapp\.venv\Scripts\Activate.ps1)
-$env:S3_ENDPOINT_URL = "http://localhost:8333"
-uvicorn personal_expenses_app.api.app:app --reload
+Load and analyze personal expenses from bank accounts.
 
-Deploy and Run FrontEnd
-docker stop expenses-frontend
-docker rm expenses-frontend
-docker build -t expenses-frontend:latest C:\Users\salas\VSCodeProjects\github\personalexpensesapp\frontend
-docker run -d --name expenses-frontend -p 3000:3000 -e API_URL=http://host.docker.internal:8000 expenses-frontend:latest
+The app parses monthly bank statement PDFs (Citi, Wells Fargo, Chase, Banamex), categorizes each transaction by keyword rules, stores them in Postgres, and shows them in a web dashboard with expenses, categories, rental properties, vehicles, statement import and an AI chat assistant.
+
+- **Backend:** FastAPI (Python 3.11+, managed with uv), in `src/personal_expenses_app/`
+- **Frontend:** Next.js 15 / React 19 / Tailwind, in `frontend/`
+- **Database:** Postgres (Docker)
+- **File storage:** SeaweedFS, an S3-compatible store (Docker), for statement PDFs and receipts
+- **Chat assistant:** Ollama running locally
+
+Commands below are for PowerShell on Windows, run from the project root unless noted.
+
+## Run Backend
+
+The backend is a FastAPI app served by uvicorn on the host (not in Docker). Commands below are for PowerShell, run from the project root.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (manages Python 3.11+ and the `.venv`)
+- Docker Desktop (for Postgres and SeaweedFS)
+
+### 1. Configure
+
+```powershell
+cp .env.example .env          # set DATABASE_URL
+cp s3.json.example s3.json    # set access_key / secret_key
+```
+
+Both files are gitignored. To use the Postgres container from `docker-compose.yml`, set
+`DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@localhost:5432/expensesassistant`
+(the password is in `docker-compose.yml`). The S3 keys must match `seaweedfs/identities.json`.
+
+### 2. Start Postgres and SeaweedFS
+
+```powershell
+docker compose up -d postgres seaweedfs
+```
+
+The backend creates and migrates its tables on startup; there is no separate migration step. Don't run `docker compose up` for the `backend` service: its `Dockerfile.backend` doesn't exist.
+
+### 3. Install dependencies
+
+```powershell
+uv sync
+```
+
+Packages come from public PyPI (set in `pyproject.toml`). If `uv sync` instead tries to download from a company mirror (e.g. a 403 error from an Artifactory URL), a user-wide uv setting is overriding the project. Point uv at PyPI for the current window and retry:
+
+```powershell
+$env:UV_DEFAULT_INDEX = "https://pypi.org/simple"
+uv sync
+```
+
+### 4. Run
+
+```powershell
+$env:S3_ENDPOINT_URL = "http://localhost:8333"   # s3.json uses the Docker-only host "seaweedfs"
+uv run uvicorn personal_expenses_app.api.app:app --reload
+```
+
+Instead of setting `S3_ENDPOINT_URL` each time, you can uncomment it in `.env`.
+
+The API is at http://localhost:8000 (interactive docs at http://localhost:8000/docs).
+
+### Tests
+
+```powershell
+uv run --with pytest pytest tests
+```
+
+## Run Frontend
+
+### Development
+
+Requires [Node.js](https://nodejs.org/en/download).
+
+```powershell
+cd frontend
+cp .env.local.example .env.local   # adjust API_URL if the backend isn't on http://localhost:8000
+npm install
+npm run dev
+```
+
+Open http://localhost:3000. The frontend only calls its own `/api/...` routes, which forward requests to the backend at `API_URL`.
+
+Other commands: `npm run lint`, `npm run build`.
+
+### Docker
+
+Build and run the production image, pointing it at a backend running on the host:
+
+```powershell
+docker stop expenses-frontend; docker rm expenses-frontend
+docker build -t expenses-frontend:latest ./frontend
+docker run -d --name expenses-frontend -p 3000:3000 `
+  -e API_URL=http://host.docker.internal:8000 `
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 `
+  expenses-frontend:latest
 docker logs expenses-frontend
-http://localhost:3000
+```
 
-Deploy Node.JS
-1. https://nodejs.org/en/download
-2. cd frontend
-	cp .env.local.example .env.local   # adjust API_URL if backend isn't on :8000
-3. npm install
-4. npm run dev
+Open http://localhost:3000.
 
-Install Ollama v0.24.0 locally
-$env:LOCALAPPDATA\Programs\Ollama\ollama.exe
-whitelist registry.ollama.ai in Zscaler
-ollama serve          # start Ollama daemon
-ollama pull llama3.2  # download the model (one-time)
+## Chat Assistant (Ollama)
 
-SeaweedFS
-Admin UI is live at http://localhost:23646 with a login page (default admin/admin)
+The chat widget needs Ollama running locally.
 
-Backup Postgres DB on Docker Image
-docker exec -t postgres pg_dump -U postgres expenses > expenses_051026-1242.sql
+1. Install Ollama (tested with v0.24.0). On Windows it installs to `$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`.
+2. Start it and download the model once:
 
-POST /expenses — creates a new expense manually (marks it as overridden=true), returns 409 on duplicate
-DELETE /expenses/{id} — deletes an expense, returns 204
-GET /categories now returns [[{id, name, keywords[]}]](http://vscodecontentref/22) from the categories table
-POST /categories — create a category
-PUT /categories/{id} — update a category
-DELETE /categories/{id} — delete a category
-POST /categories/seed — seeds the DB from RULE_BASED_CATEGORIES, inserting only missing ones, returns {inserted, skipped}
-Backend (rule_based_expense_categorizer.py):
-POST /expenses/bulk-update endpoint — accepts { ids, category?, property_id?, comments? } and applies whichever fields are present to all listed expense IDs, marking each as overridden=True. Returns the list of updated IDs.
-GET/POST /vehicles
-GET/PUT/DELETE /vehicles/{id}
-GET/POST /vehicles/{id}/services
-PUT/DELETE /vehicles/{id}/services/{serviceId}
-GET /expenses/property-summary — JOINs all_expenses with rental_properties on property_id, groups by month + property alias, returns { month, property, total } (net debit − credit, NaN-safe).
-POST /expenses/{id}/receipt — multipart upload, validates extension (pdf/images), stores file to receipts/ dir as {id}_{sanitized_name}, path-traversal safe
-	- Default path: <project_root>/receipts/ — controlled by the RECEIPTS_DIR environment variable (falls back to receipts at the project root if not set)
-	- Filename format: {expense_id}_{original_filename} (e.g., 42_scan.pdf)
-GET /expenses/{id}/receipt?inline=true|false — serves file inline (view) or as download attachment
-DELETE /expenses/{id}/receipt — removes file and clears DB column
-POST /pipeline/run endpoint — runs the pipeline in a daemon thread, captures stdout via a queue-backed writer, and streams chunks back as text/plain
-GET /statements/{bank}/{year} — returns the list of months that have a PDF file on disk for that bank/year
-POST /statements/{bank}/{year}/{month} — uploads a PDF, saving it as resources/{bank}/{year}/{bank}-{month}-{year}.pdf (creates directories if needed); validates bank, month, year, and file extension
-GET /statements/{bank}/{year}/{month} — downloads the PDF via FileResponse
-POST /rental-properties/{id}/sync-expenses — looks up the property's tenant field, then does a case-insensitive ILIKE %tenant% search across all all_expenses.description rows and sets their property_id. Returns { "updated": N }
-GET /expenses/action-items — runs detection, returns open items (?include_resolved=true for all).
-POST /expenses/action-items/{item_id}/resolve — marks an item resolved.
+   ```powershell
+   ollama serve          # start the Ollama service
+   ollama pull llama3.2  # one-time model download
+   ```
 
+On a network with Zscaler, `registry.ollama.ai` must be allowlisted for `ollama pull` to work.
+
+The frontend uses `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2`).
+
+## Admin Tools
+
+| Tool | URL | Login |
+|---|---|---|
+| SeaweedFS Admin UI (browse stored PDFs and receipts) | http://localhost:23646 | `admin` / `admin` by default; change with `SEAWEEDFS_ADMIN_USER` / `SEAWEEDFS_ADMIN_PASSWORD` |
+| pgAdmin (Postgres) | http://localhost:5050 | Set in `docker-compose.yml` (`PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`) |
+
+Start them with `docker compose up -d seaweedfs-admin pg_admin`.
+
+## Backups
+
+Two Docker services make backups automatically. Each runs once at startup and then every 30 days:
+
+- `pg-backup`: dumps the `expensesassistant` database to `backups/postgres/` as gzipped SQL. Change the interval with `POSTGRES_BACKUP_INTERVAL_DAYS` in `.env`.
+- `s3-backup`: archives the `expenses-documents` bucket to `backups/s3/`. Change the interval with `S3_BACKUP_INTERVAL_DAYS` in `.env`.
+
+```powershell
+docker compose up -d pg-backup s3-backup
+```
+
+Manual database dump:
+
+```powershell
+docker exec -t postgres pg_dump -U postgres expensesassistant > expensesassistant_$(Get-Date -Format yyyyMMdd-HHmmss).sql
+```
+
+Backups contain personal financial data. `backups/s3/` is gitignored but `backups/postgres/` is not, so don't commit with `git add -A`.
+
+## How It Works
+
+### Importing statements
+
+1. Upload a statement PDF for a bank and month (the Import page, or `POST /statements/{bank}/{year}/{month}`). It is stored in SeaweedFS as `resources/{bank}/{year}/{bank}-{month}-{year}.pdf`.
+2. Run the import (`POST /pipeline/run`). For each selected month, the bank's loader reads the PDF, the categorizer assigns categories, and the rows are saved to Postgres. Progress is streamed back as plain text.
+3. Expenses are linked to rental properties whose tenant name appears in the description.
+
+### Categories
+
+Each category has a list of keywords. A transaction gets the first category whose keyword appears in its description (case-sensitive), or `Other` if none match, so category order matters. Categories live in the `categories` table; `POST /categories/seed` fills it from the built-in defaults.
+
+Editing an expense's category by hand marks it as overridden, and later imports keep your choice.
+
+### Amounts
+
+Net amount = debit − credit: positive is an expense, negative is income or a refund. Summaries can spread an expense over several months (amortization).
+
+## API Reference
+
+Interactive docs with request and response details: http://localhost:8000/docs
+
+### Expenses
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/expenses` | List expenses. Filters: `bank`, `category`, `date_from`, `date_to`, `description`, `comments`, `property_id` |
+| POST | `/expenses` | Create an expense manually (marked overridden). 409 on duplicate |
+| GET | `/expenses/{id}` | Get one expense |
+| PATCH | `/expenses/{id}` | Update an expense (marks it overridden) |
+| PATCH | `/expenses/{id}/category` | Change an expense's category (marks it overridden) |
+| POST | `/expenses/bulk-update` | Body `{ ids, category?, property_id?, comments? }`. Applies the given fields to every listed expense and marks them overridden. Returns the updated IDs |
+| DELETE | `/expenses/{id}` | Delete an expense. Returns 204 |
+| GET | `/expenses/comments` | Expenses that have a comment, optionally filtered by `date_from` / `date_to` |
+| GET | `/expenses/summary` | Net totals by month, category and rental property |
+| GET | `/expenses/property-summary` | Net totals by month and rental property: `{ month, property, total }` |
+| GET | `/expenses/action-items` | Open action items: unpaid rent and large utility bill changes. Add `?include_resolved=true` for all |
+| POST | `/expenses/action-items/{item_id}/resolve` | Mark an action item resolved |
+| GET | `/banks` | Distinct bank names |
+
+### Receipts
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/expenses/{id}/receipt` | Upload or replace a receipt (PDF or image). Stored in SeaweedFS as `receipts/{id}_{filename}` |
+| GET | `/expenses/{id}/receipt` | Get the receipt. `?inline=true` to view, `false` to download |
+| DELETE | `/expenses/{id}/receipt` | Delete the receipt. Returns 204 |
+
+### Categories
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/categories` | List categories: `{ id, name, keywords[] }` |
+| POST | `/categories` | Create a category |
+| PUT | `/categories/{id}` | Update a category and re-apply its keywords to existing expenses |
+| DELETE | `/categories/{id}` | Delete a category |
+| POST | `/categories/seed` | Add any missing built-in categories. Returns `{ inserted, skipped }` |
+
+### Rental properties
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/rental-properties` | List properties |
+| POST | `/rental-properties` | Create a property |
+| PUT | `/rental-properties/{id}` | Update a property |
+| DELETE | `/rental-properties/{id}` | Delete a property |
+| POST | `/rental-properties/{id}/sync-expenses` | Link every expense whose description contains the property's tenant name (case-insensitive). Returns `{ updated }` |
+
+### Vehicles
+
+| Method | Path | Description |
+|---|---|---|
+| GET, POST | `/vehicles` | List or create vehicles |
+| GET, PUT, DELETE | `/vehicles/{id}` | Get, update or delete a vehicle |
+| GET, POST | `/vehicles/{id}/services` | List or add service records |
+| PUT, DELETE | `/vehicles/{id}/services/{service_id}` | Update or delete a service record |
+
+### Statements and import
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/statements/{bank}/{year}` | Months that have a statement PDF for that bank and year |
+| POST | `/statements/{bank}/{year}/{month}` | Upload a statement PDF |
+| GET | `/statements/{bank}/{year}/{month}` | Download a statement PDF |
+| POST | `/pipeline/run` | Import the selected statements. Streams progress as plain text |

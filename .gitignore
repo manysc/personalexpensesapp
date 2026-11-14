@@ -17,3 +17,6 @@ receipts/
 
 # Periodic S3 bucket backup archives (contain the same PII as resources/receipts)
 backups/s3/
+
+# Periodic Postgres dumps (contain personal financial data)
+backups/postgres/
