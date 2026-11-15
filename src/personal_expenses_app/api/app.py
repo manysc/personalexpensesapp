@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import io
 import math
 import json
@@ -7,6 +8,7 @@ import os
 import queue
 import re
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -26,11 +28,8 @@ from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED
 from personal_expenses_app.core.summarizer import Summarizer
 from personal_expenses_app.core.tenant_matching import tenant_match_tokens
 from personal_expenses_app.infrastructure import s3_storage
-from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFileLoader
-from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
-from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
 from personal_expenses_app.infrastructure.expense_db_persistence import ExpenseDbPersistence
-from personal_expenses_app.infrastructure.wellsfargo_file_loader import WellsfargoFileLoader
+from personal_expenses_app.infrastructure.statement_import import LOADERS, StatementBatch, statement_key
 from personal_expenses_app.interface.user_interaction import UserInteraction
 
 _project_root = Path(__file__).parent.parent.parent.parent
@@ -95,6 +94,7 @@ class _AllExpense(_Base):
         UniqueConstraint(
             "date", "bank", "description", "debit", "credit",
             name="uix_expense_natural_key",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 
@@ -137,11 +137,13 @@ class _ActionItem(_Base):
     resolved_at = Column(DateTime, nullable=True)
 
 
+@functools.cache
 def _get_engine():
+    """Return the process-wide engine, so every request shares one connection pool."""
     connection_string = os.environ.get("DATABASE_URL")
     if not connection_string:
         raise RuntimeError("DATABASE_URL environment variable is not set.")
-    return create_engine(connection_string)
+    return create_engine(connection_string, pool_pre_ping=True)
 
 
 def _run_migrations(engine) -> None:
@@ -1739,58 +1741,49 @@ def run_pipeline(body: PipelineRunRequest):
 
     def _execute() -> None:
         year = body.year
-        citi_m = set(body.citi_months)
-        wf_m = set(body.wellsfargo_months)
-        chase_m = set(body.chase_months)
-        banamex_m = set(body.banamex_months)
-
-        citi_loader = CitiFileLoader()
-        wf_loader = WellsfargoFileLoader()
-        chase_loader = ChaseFileLoader()
-        banamex_loader = BanamexFileLoader()
+        selected_months = {
+            "citi": set(body.citi_months),
+            "wellsfargo": set(body.wellsfargo_months),
+            "chase": set(body.chase_months),
+            "banamex": set(body.banamex_months),
+        }
         categorizer = RuleBasedExpenseCategorizer(_load_category_keywords())
-        db = ExpenseDbPersistence()
+        db = ExpenseDbPersistence(engine=_get_engine())
         summarizer = Summarizer()
         user = UserInteraction()
 
-        active_months = [
-            m for m in _PIPELINE_MONTH_ORDER
-            if m in citi_m or m in wf_m or m in chase_m or m in banamex_m
-        ]
+        statements_by_month = {
+            month: [
+                (bank, statement_key(bank, year, month))
+                for bank in LOADERS
+                if month in selected_months[bank]
+            ]
+            for month in _PIPELINE_MONTH_ORDER
+        }
+        statement_keys = [key for statements in statements_by_month.values() for _, key in statements]
         all_labeled: list = []
 
-        for month in active_months:
-            print(f"\nProcessing {month} {year}...")
-            dfs = []
-            if month in citi_m:
-                key = f"resources/citi/{year}/citi-{month}-{year}.pdf"
-                df = citi_loader.load_expenses_and_credits(key)
-                if df is not None and not df.empty:
-                    dfs.append(df)
-            if month in wf_m:
-                key = f"resources/wellsfargo/{year}/wellsfargo-{month}-{year}.pdf"
-                df = wf_loader.load_expenses_and_credits(key)
-                if df is not None and not df.empty:
-                    dfs.append(df)
-            if month in chase_m:
-                key = f"resources/chase/{year}/chase-{month}-{year}.pdf"
-                df = chase_loader.load_expenses_and_credits(key)
-                if df is not None and not df.empty:
-                    dfs.append(df)
-            if month in banamex_m:
-                key = f"resources/banamex/{year}/banamex-{month}-{year}.pdf"
-                df = banamex_loader.load_expenses_and_credits(key)
-                if df is not None and not df.empty:
-                    dfs.append(df)
+        started = time.perf_counter()
+        with StatementBatch(statement_keys) as batch:
+            for month, statements in statements_by_month.items():
+                if not statements:
+                    continue
+                print(f"\nProcessing {month} {year}...")
+                dfs = [df for bank, key in statements if not (df := batch.load(bank, key)).empty]
+                if not dfs:
+                    print(f"No data loaded for {month} {year}")
+                    continue
 
-            if not dfs:
-                print(f"No data loaded for {month} {year}")
-                continue
+                combined = pd.concat(dfs, ignore_index=True)
+                labeled = categorizer.categorize_expenses(combined)
+                db.save_expenses(labeled)
+                all_labeled.append(labeled)
 
-            combined = pd.concat(dfs, ignore_index=True)
-            labeled = categorizer.categorize_expenses(combined)
-            db.save_expenses(labeled)
-            all_labeled.append(labeled)
+        if statement_keys:
+            elapsed = time.perf_counter() - started
+            workers = batch.worker_processes
+            reading = f", reading PDFs in {workers} worker processes" if workers else ""
+            print(f"\nImported {len(statement_keys)} statement(s) in {elapsed:.1f}s{reading}.")
 
         if all_labeled:
             linked = _link_properties_by_tenant()

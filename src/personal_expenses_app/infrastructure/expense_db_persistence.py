@@ -1,11 +1,14 @@
 import os
+import threading
 from collections import defaultdict
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import Boolean, Column, Integer, Numeric, String, UniqueConstraint, create_engine, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session
 
 _project_root = Path(__file__).parent.parent.parent.parent
@@ -19,9 +22,12 @@ class _Base(DeclarativeBase):
 class _AllExpense(_Base):
     __tablename__ = "all_expenses"
     __table_args__ = (
+        # NULLS NOT DISTINCT: every row has a NULL debit or credit, and the upsert in
+        # save_expenses only finds the existing row if NULLs compare equal.
         UniqueConstraint(
             "date", "bank", "description", "debit", "credit",
             name="uix_expense_natural_key",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 
@@ -36,8 +42,69 @@ class _AllExpense(_Base):
     comments = Column(String(2000), nullable=True)
 
 
+# The schema checks need to run once per database per process, not on every import.
+_schema_ready: set[str] = set()
+_schema_lock = threading.Lock()
+
+# Each statement is idempotent and cheap when there is nothing to change: it only reads
+# the catalog. The duplicate cleanup in particular runs only while the natural key is not
+# enforced, which is the only time duplicates can exist.
+_MIGRATIONS = (
+    # Widen the date column if an earlier version created it narrower.
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'all_expenses' AND column_name = 'date'
+          AND character_maximum_length < 20
+      ) THEN
+        ALTER TABLE all_expenses ALTER COLUMN date TYPE VARCHAR(20);
+      END IF;
+    END $$;
+    """,
+    # Enforce the natural key with NULLs comparing equal. Before (re)creating it, remove
+    # duplicate rows that the missing or NULLs-distinct key let in, keeping the most
+    # recently inserted (highest id) of each.
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c JOIN pg_index i ON i.indexrelid = c.conindid
+        WHERE c.conname = 'uix_expense_natural_key' AND i.indnullsnotdistinct
+      ) THEN
+        DELETE FROM all_expenses a
+        USING all_expenses b
+        WHERE a.id < b.id
+          AND a.date = b.date
+          AND a.bank = b.bank
+          AND a.description = b.description
+          AND (a.debit = b.debit OR (a.debit IS NULL AND b.debit IS NULL))
+          AND (a.credit = b.credit OR (a.credit IS NULL AND b.credit IS NULL));
+        ALTER TABLE all_expenses DROP CONSTRAINT IF EXISTS uix_expense_natural_key;
+        ALTER TABLE all_expenses
+          ADD CONSTRAINT uix_expense_natural_key
+          UNIQUE NULLS NOT DISTINCT (date, bank, description, debit, credit);
+      END IF;
+    END $$;
+    """,
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'all_expenses' AND column_name = 'overridden'
+      ) THEN
+        ALTER TABLE all_expenses ADD COLUMN overridden BOOLEAN NOT NULL DEFAULT FALSE;
+      END IF;
+    END $$;
+    """,
+)
+
+
 class ExpenseDbPersistence:
-    """Persists labeled expense DataFrames into the all_expenses table in a PostgreSQL database."""
+    """Persists labeled expense DataFrames into the all_expenses table in a PostgreSQL database.
+
+    Pass the application's ``engine`` to share its connection pool; otherwise an engine is
+    created from ``connection_string`` or the ``DATABASE_URL`` environment variable.
+    """
 
     _COLUMN_MAP = {
         "Date": "date",
@@ -48,75 +115,29 @@ class ExpenseDbPersistence:
         "Category": "category",
     }
 
-    def __init__(self, connection_string: str | None = None):
-        if connection_string is None:
-            connection_string = os.environ.get("DATABASE_URL")
-        if not connection_string:
-            raise ValueError(
-                "A database connection string must be provided or set via the "
-                "DATABASE_URL environment variable."
-            )
-        self._engine = create_engine(connection_string)
-        _Base.metadata.create_all(self._engine)
-        self._run_migrations()
+    def __init__(self, connection_string: Optional[str] = None, *, engine: Optional[Engine] = None):
+        if engine is None:
+            connection_string = connection_string or os.environ.get("DATABASE_URL")
+            if not connection_string:
+                raise ValueError(
+                    "A database connection string must be provided or set via the "
+                    "DATABASE_URL environment variable."
+                )
+            engine = create_engine(connection_string)
+        self._engine = engine
+        self._ensure_schema()
 
-    def _run_migrations(self) -> None:
-        """Apply incremental schema migrations."""
-        with self._engine.connect() as conn:
-            # Widen date column if created with a smaller size in an earlier version.
-            conn.execute(
-                text(
-                    "ALTER TABLE all_expenses "
-                    "ALTER COLUMN date TYPE VARCHAR(20)"
-                )
-            )
-            # Before adding the unique constraint, remove duplicate rows that
-            # may have been inserted by earlier runs of save_expenses, keeping
-            # the most-recently inserted record (highest id) for each group.
-            conn.execute(
-                text(
-                    "DELETE FROM all_expenses a "
-                    "USING all_expenses b "
-                    "WHERE a.id < b.id "
-                    "  AND a.date = b.date "
-                    "  AND a.bank = b.bank "
-                    "  AND a.description = b.description "
-                    "  AND (a.debit = b.debit OR (a.debit IS NULL AND b.debit IS NULL)) "
-                    "  AND (a.credit = b.credit OR (a.credit IS NULL AND b.credit IS NULL))"
-                )
-            )
-            # Add the unique constraint (idempotent: skipped if already present).
-            # NULLS NOT DISTINCT ensures two NULL debit/credit values are treated
-            # as equal, which is required for correct duplicate detection.
-            conn.execute(
-                text(
-                    "DO $$ BEGIN "
-                    "  IF NOT EXISTS ( "
-                    "    SELECT 1 FROM pg_constraint "
-                    "    WHERE conname = 'uix_expense_natural_key' "
-                    "  ) THEN "
-                    "    ALTER TABLE all_expenses "
-                    "    ADD CONSTRAINT uix_expense_natural_key "
-                    "    UNIQUE NULLS NOT DISTINCT (date, bank, description, debit, credit); "
-                    "  END IF; "
-                    "END $$;"
-                )
-            )
-            # Add overridden column if it doesn't exist yet.
-            conn.execute(
-                text(
-                    "DO $$ BEGIN "
-                    "  IF NOT EXISTS ( "
-                    "    SELECT 1 FROM information_schema.columns "
-                    "    WHERE table_name = 'all_expenses' AND column_name = 'overridden' "
-                    "  ) THEN "
-                    "    ALTER TABLE all_expenses "
-                    "    ADD COLUMN overridden BOOLEAN NOT NULL DEFAULT FALSE; "
-                    "  END IF; "
-                    "END $$;"
-                )
-            )
-            conn.commit()
+    def _ensure_schema(self) -> None:
+        """Create the table and apply migrations, the first time this process sees the database."""
+        database = self._engine.url.render_as_string(hide_password=False)
+        with _schema_lock:
+            if database in _schema_ready:
+                return
+            _Base.metadata.create_all(self._engine)
+            with self._engine.begin() as conn:
+                for migration in _MIGRATIONS:
+                    conn.execute(text(migration))
+            _schema_ready.add(database)
 
     def save_expenses(self, labeled_expenses: pd.DataFrame) -> None:
         """Upsert all rows from labeled_expenses into the all_expenses table.

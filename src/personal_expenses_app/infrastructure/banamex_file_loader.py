@@ -1,377 +1,172 @@
-import io
-import logging
+"""Banamex account statements (amounts in Mexican pesos, converted to US dollars).
+
+The "Detalle de Operaciones" table has the columns
+``FECHA | CONCEPTO | RETIROS | DEPÓSITOS | SALDO``. A transaction starts on a line with
+its date (``DD MMM``) and can continue over several lines, some of them branch metadata
+(SUC, CAJA, HORA, AUT). The last line carrying amounts holds the transaction amount
+followed by the running balance.
+"""
+
+from __future__ import annotations
+
 import re
+from dataclasses import dataclass, field
+from typing import Optional, Sequence
 
-import pandas as pd
-import pdfplumber
+from personal_expenses_app.infrastructure.statement_loader import StatementLoader, Transaction
+from personal_expenses_app.infrastructure.statement_period import StatementPeriod
 
-from personal_expenses_app.core.rule_based_expense_categorizer import (
-    RuleBasedExpenseCategorizer,
+PESOS_PER_DOLLAR = 18.5
+
+_MONTH_BY_SPANISH_ABBREVIATION = {
+    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12,
+}
+_UNKNOWN_MONTH = 1
+
+_TRANSACTION_START = re.compile(r"^(\d{1,2})\s+([A-Z]{3})\s+(.+)$")
+# pdfplumber sometimes splits the cents: "1,234.5 6".
+_AMOUNT = re.compile(r"[\d,]+\.\d\s?\d")
+_PAGE_FOOTER = re.compile(r"Página \d+ de \d+")
+_REFERENCE_NUMBER = re.compile(r"^\d{8,}$")
+
+_METADATA_PREFIXES = ("SUC ", "CAJA ", "HORA ", "AUT ")
+_OPENING_BALANCE = "SALDO ANTERIOR"
+_CREDIT_KEYWORDS = (
+    "PAGO RECIBIDO", "DEPOSITO", "DEPÓSITO", "ABONO", "TRANSFERENCIA RECIBIDA",
+    "EXENCION", "EXENCIÓN", "INTERES", "INTERÉS",
 )
-from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
-
-logger = logging.getLogger(__name__)
 
 
-class BanamexFileLoader:
-    # Conversion rate: pesos to dollars
-    PESO_TO_DOLLAR_RATE = 18.5
+def _to_dollars(pesos: float) -> float:
+    return round(pesos / PESOS_PER_DOLLAR, 2)
 
-    def __init__(self):
-        super().__init__()
 
-    @staticmethod
-    def _convert_to_dollars(peso_amount):
-        """Convert Mexican pesos to US dollars."""
-        if peso_amount is None:
-            return None
-        return round(peso_amount / BanamexFileLoader.PESO_TO_DOLLAR_RATE, 2)
+def _split_amounts(text: str) -> tuple[str, list[float]]:
+    """Separate a line into its description text and the amounts printed on it."""
+    printed_amounts = _AMOUNT.findall(text)
+    for printed_amount in printed_amounts:
+        text = text.replace(printed_amount, "", 1)
+    amounts = [float(a.replace(" ", "").replace(",", "")) for a in printed_amounts]
+    return " ".join(text.split()), amounts
 
-    @staticmethod
-    def _parse_month_abbrev(month_abbrev):
-        """Convert Spanish month abbreviation to month number."""
-        months = {
-            "ENE": "01",
-            "FEB": "02",
-            "MAR": "03",
-            "ABR": "04",
-            "MAY": "05",
-            "JUN": "06",
-            "JUL": "07",
-            "AGO": "08",
-            "SEP": "09",
-            "OCT": "10",
-            "NOV": "11",
-            "DIC": "12",
-        }
-        return months.get(month_abbrev.upper(), "01")
 
-    def _extract_transactions_from_pdf(self, filename):
-        """
-        Extract transaction data from a Banamex PDF statement.
-        Returns a DataFrame with Date, Description, Debit, and Credit columns.
-        All amounts are converted from Mexican pesos to US dollars.
+def _is_table_header(line: str) -> bool:
+    return "FECHA CONCEPTO" in line and ("RETIROS" in line or "DEP" in line)
 
-        Banamex format has a table with columns:
-        FECHA | CONCEPTO | RETIROS | DEPÓSITOS | SALDO
-        
-        Each transaction starts with DD MMM and can span multiple lines.
-        Lines with SUC, CAJA, HORA are metadata and should be excluded.
-        The last line of each transaction contains the amounts.
 
-        `filename` is an S3 object key (e.g. "resources/banamex/2025/banamex-jan-2025.pdf"),
-        fetched from SeaweedFS rather than the local filesystem.
-        """
-        pdf_bytes = get_object_bytes(filename)
+def _ends_table(line: str, stripped: str) -> bool:
+    return "Resumen Operaciones" in line or stripped.startswith("TARJETA ")
 
-        all_transactions = []
 
-        # Extract year and month from filename
-        year_match = re.search(r"-(\w+)-(\d{4})", filename)
-        year = year_match.group(2) if year_match else "2025"
-        statement_month = year_match.group(1) if year_match else "jan"
-        month_map = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-        }
-        statement_month_num = month_map.get(statement_month.lower(), 1)
+def _is_boilerplate(line: str, stripped: str) -> bool:
+    return (
+        not stripped
+        or "FECHA CONCEPTO" in line
+        or stripped.startswith("000")
+        or "Detalle de Operaciones" in line
+        or "En pesos Moneda Nacional" in line
+        or stripped.startswith("Ciudad de México:")
+        or stripped.startswith("Resto del país:")
+    )
 
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            in_transaction_section = False
-            current_transaction = None
-            self.previous_balance = None  # Track as instance variable
 
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
+def _is_metadata(stripped: str) -> bool:
+    return stripped.startswith(_METADATA_PREFIXES) or bool(_REFERENCE_NUMBER.match(stripped))
 
-                lines = text.split("\n")
 
-                for line in lines:
-                    line_stripped = line.strip()
+@dataclass
+class _OpenTransaction:
+    """A transaction whose lines are still being read."""
 
-                    # Detect transaction section start
-                    if "FECHA CONCEPTO" in line and ("RETIROS" in line or "DEP" in line):
-                        in_transaction_section = True
-                        continue
+    day: int
+    month: int
+    description_lines: list[str] = field(default_factory=list)
+    amounts: list[float] = field(default_factory=list)
 
-                    # Stop at summary sections
-                    if (
-                        "Resumen Operaciones" in line
-                        or line_stripped.startswith("TARJETA ")
-                    ):
-                        # Finalize any pending transaction
-                        if current_transaction:
-                            self._add_transaction(
-                                current_transaction,
-                                all_transactions,
-                                year,
-                            )
-                            current_transaction = None
-                        in_transaction_section = False
-                        continue
 
-                    if not in_transaction_section:
-                        continue
+class _StatementParser:
+    """Reads one statement; keeps the running balance used to tell deposits from withdrawals."""
 
-                    # Detect page boundaries - don't finalize transaction, just reset section flag
-                    # Transactions can span multiple pages, so keep current_transaction alive
-                    # Some pages start with "Centro de Atención Telefónica Página X de Y" so match
-                    # anywhere in the line, not just at the start.
-                    if re.search(r"Página \d+ de \d+", line_stripped):
-                        in_transaction_section = False
-                        continue
+    def __init__(self) -> None:
+        self.transactions: list[Transaction] = []
+        self._in_table = False
+        self._open: Optional[_OpenTransaction] = None
+        self._previous_balance: Optional[float] = None
 
-                    # Skip header repetitions, page markers, and empty lines
-                    if (
-                        not line_stripped
-                        or "FECHA CONCEPTO" in line
-                        or line_stripped.startswith("000")
-                        or "Detalle de Operaciones" in line
-                        or "En pesos Moneda Nacional" in line
-                        or line_stripped.startswith("Ciudad de México:")
-                        or line_stripped.startswith("Resto del país:")
-                    ):
-                        continue
+    def parse(self, page_texts: Sequence[str]) -> list[Transaction]:
+        for text in page_texts:
+            for line in text.split("\n"):
+                self._read_line(line, line.strip())
+        self._close_open_transaction()
+        return self.transactions
 
-                    # Check if this is the start of a new transaction (has date)
-                    date_match = re.match(r"^(\d{1,2})\s+([A-Z]{3})\s+(.+)$", line_stripped)
-                    
-                    if date_match:
-                        # Finalize previous transaction if exists
-                        if current_transaction:
-                            self._add_transaction(
-                                current_transaction,
-                                all_transactions,
-                                year,
-                            )
+    def _read_line(self, line: str, stripped: str) -> None:
+        if _is_table_header(line):
+            self._in_table = True
+        elif _ends_table(line, stripped):
+            self._close_open_transaction()
+            self._in_table = False
+        elif not self._in_table:
+            pass
+        elif _PAGE_FOOTER.search(stripped):
+            # The table resumes at the next header; a transaction may continue across the break.
+            self._in_table = False
+        elif _is_boilerplate(line, stripped):
+            pass
+        elif start := _TRANSACTION_START.match(stripped):
+            self._close_open_transaction()
+            self._open_transaction(*start.groups())
+        elif self._open:
+            self._continue_transaction(stripped)
 
-                        # Start new transaction
-                        day = date_match.group(1).zfill(2)
-                        month_abbrev = date_match.group(2)
-                        rest = date_match.group(3)
+    def _open_transaction(self, day: str, month_abbreviation: str, rest: str) -> None:
+        month = _MONTH_BY_SPANISH_ABBREVIATION.get(month_abbreviation, _UNKNOWN_MONTH)
+        self._open = _OpenTransaction(int(day), month)
+        description, amounts = _split_amounts(rest)
+        if description and description.upper() != _OPENING_BALANCE:
+            self._open.description_lines.append(description)
+        if amounts:
+            self._open.amounts = amounts
 
-                        month_num = self._parse_month_abbrev(month_abbrev)
-                        
-                        current_transaction = {
-                            "day": day,
-                            "month": month_num,
-                            "description_lines": [],
-                            "amounts": [],
-                        }
-                        
-                        # Parse the rest of the first line
-                        amounts = re.findall(r"[\d,]+\.\d\s?\d", rest)
-                        desc = rest
-                        for amt in amounts:
-                            desc = desc.replace(amt, "", 1)
-                        desc = " ".join(desc.split()).strip()
-                        
-                        if desc and desc.upper() != "SALDO ANTERIOR":
-                            current_transaction["description_lines"].append(desc)
-                        
-                        if amounts:
-                            current_transaction["amounts"] = [
-                                float(a.replace(" ", "").replace(",", "")) for a in amounts
-                            ]
-                    
-                    elif current_transaction:
-                        # This is a continuation line for the current transaction
-                        
-                        # Extract amounts from this line first (even from metadata lines)
-                        amounts = re.findall(r"[\d,]+\.\d\s?\d", line_stripped)
-                        
-                        # Skip metadata lines (but we've already extracted amounts)
-                        if any(
-                            line_stripped.startswith(prefix)
-                            for prefix in ["SUC ", "CAJA ", "HORA ", "AUT "]
-                        ) or re.match(r"^\d{8,}$", line_stripped):
-                            # Update amounts if this line has them
-                            if amounts:
-                                current_transaction["amounts"] = [
-                                    float(a.replace(" ", "").replace(",", "")) for a in amounts
-                                ]
-                            # Skip adding to description
-                            continue
-                        
-                        # Extract description
-                        desc = line_stripped
-                        for amt in amounts:
-                            desc = desc.replace(amt, "", 1)
-                        desc = " ".join(desc.split()).strip()
-                        
-                        # Add description if meaningful
-                        if desc and not desc.startswith("$"):
-                            current_transaction["description_lines"].append(desc)
-                        
-                        # Update amounts if this line has them (last line of transaction)
-                        if amounts:
-                            current_transaction["amounts"] = [
-                                float(a.replace(",", "")) for a in amounts
-                            ]
+    def _continue_transaction(self, stripped: str) -> None:
+        description, amounts = _split_amounts(stripped)
+        if amounts:
+            self._open.amounts = amounts
+        if description and not description.startswith("$") and not _is_metadata(stripped):
+            self._open.description_lines.append(description)
 
-            # Finalize any remaining transaction
-            if current_transaction:
-                self._add_transaction(
-                    current_transaction, all_transactions, year
-                )
-
-        if not all_transactions:
-            logger.warning(f"No transactions found in PDF: {filename}")
-            return pd.DataFrame(columns=["Date", "Description", "Debit", "Credit", "Bank"])
-
-        df = pd.DataFrame(all_transactions)
-        df["Date"] = pd.to_datetime(df["Date"], format="%d/%m/%Y", errors="coerce")
-        # Adjust year for transactions from the previous year
-        # (e.g., December transactions appearing in a January statement)
-        mask = df["Date"].dt.month > statement_month_num
-        if mask.any():
-            df.loc[mask, "Date"] = df.loc[mask, "Date"].apply(lambda d: d.replace(year=d.year - 1))
-        df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
-        df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
-        df["Bank"] = "banamex"
-
-        # Sort by date
-        df = df.sort_values("Date").reset_index(drop=True)
-
-        return df
-
-    def _add_transaction(self, transaction, all_transactions, year):
-        """
-        Add a finalized transaction to the list.
-        Determines if it's a debit or credit based on amounts and keywords.
-        """
-        if not transaction["amounts"]:
+    def _close_open_transaction(self) -> None:
+        transaction, self._open = self._open, None
+        if transaction is None or not transaction.amounts:
             return
 
-        description = " ".join(transaction["description_lines"]).strip()
-        
-        # Skip if this is just a balance line
-        if not description or "SALDO ANTERIOR" in description.upper():
-            # But update the balance for reference
-            if transaction["amounts"]:
-                if len(transaction["amounts"]) == 1:
-                    self.previous_balance = transaction["amounts"][0]
+        description = " ".join(transaction.description_lines).strip()
+        amounts = transaction.amounts
+        if not description or _OPENING_BALANCE in description.upper():
+            if len(amounts) == 1:
+                self._previous_balance = amounts[0]
             return
-
-        amounts = transaction["amounts"]
-        
-        # Determine transaction amount and type
-        # Format can be: [AMOUNT, BALANCE] or [BALANCE] or [DEBIT, CREDIT, BALANCE]
         if len(amounts) == 1:
-            # Just balance, no transaction amount visible
-            # This shouldn't happen for real transactions
-            return
-        elif len(amounts) == 2:
-            # Most common: [AMOUNT, BALANCE]
-            transaction_amount = amounts[0]
-            balance = amounts[1]
-        else:
-            # Multiple amounts, use first as transaction
-            transaction_amount = amounts[0]
-            balance = amounts[-1]
+            return  # Only a balance: no transaction amount was printed.
 
-        # Determine if credit or debit based on keywords
-        is_credit = False
-        credit_keywords = [
-            "PAGO RECIBIDO",
-            "DEPOSITO",
-            "DEPÓSITO",
-            "ABONO",
-            "TRANSFERENCIA RECIBIDA",
-            "EXENCION",
-            "EXENCIÓN",
-            "INTERES",
-            "INTERÉS",
-        ]
-        
-        if any(keyword in description.upper() for keyword in credit_keywords):
-            is_credit = True
-        else:
-            # Check balance movement if we have previous balance
-            if self.previous_balance is not None:
-                if balance > self.previous_balance:
-                    is_credit = True
-
-        # Update previous balance for next transaction
-        self.previous_balance = balance
-
-        # Convert to dollars
-        amount_dollars = self._convert_to_dollars(transaction_amount)
-
-        # Create transaction record
-        date_str = f"{transaction['day']}/{transaction['month']}/{year}"
-        all_transactions.append(
-            {
-                "Date": date_str,
-                "Description": description,
-                "Debit": None if is_credit else amount_dollars,
-                "Credit": amount_dollars if is_credit else None,
-            }
+        amount, balance = amounts[0], amounts[-1]
+        is_credit = any(keyword in description.upper() for keyword in _CREDIT_KEYWORDS) or (
+            self._previous_balance is not None and balance > self._previous_balance
         )
+        self._previous_balance = balance
 
-    def _finalize_transaction(self, transaction, all_transactions, previous_balance, year):
-        """
-        Deprecated - kept for compatibility. Use _add_transaction instead.
-        """
-        self.previous_balance = previous_balance
-        self._add_transaction(transaction, all_transactions, year)
+        dollars = _to_dollars(amount)
+        if is_credit:
+            self.transactions.append(Transaction(transaction.month, transaction.day, description, credit=dollars))
+        else:
+            self.transactions.append(Transaction(transaction.month, transaction.day, description, debit=dollars))
 
-    @staticmethod
-    def load_expenses(filename):
-        """Load only expenses (debits) from a PDF file."""
-        loader = BanamexFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Debit"].notnull()]
 
-    @staticmethod
-    def load_credits(filename):
-        """Load only credits from a PDF file."""
-        loader = BanamexFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Credit"].notnull()]
+class BanamexFileLoader(StatementLoader):
+    bank = "banamex"
+    # An account with no movements in the month is a legitimate, empty statement.
+    fail_when_empty = False
 
-    @staticmethod
-    def load_expenses_and_credits(filename):
-        """
-        Load both expenses (debits) and credits from a PDF file and combine them.
-        Returns a DataFrame with both debits and credits.
-        All amounts are converted from Mexican pesos to US dollars at rate of 18.5 pesos per dollar.
-        """
-        loader = BanamexFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        # Only return rows that have either a debit or credit (not both null)
-        return df[df["Debit"].notnull() | df["Credit"].notnull()]
-
-    @staticmethod
-    def load_and_label_multiple_files(file_list):
-        """
-        Load and categorize expenses from multiple PDF files.
-        Similar to ChaseFileLoader.load_and_label_multiple_files.
-
-        Args:
-            file_list: List of PDF file paths to process
-
-        Returns:
-            Combined DataFrame with all transactions categorized and converted to USD
-        """
-        all_expenses = []
-        categorized_expenses = RuleBasedExpenseCategorizer()
-        banamex_file_loader = BanamexFileLoader()
-
-        for filename in file_list:
-            if object_exists(filename):
-                df = banamex_file_loader.load_expenses_and_credits(filename)
-                labeled = categorized_expenses.categorize_expenses(df)
-                all_expenses.append(labeled)
-            else:
-                print(f"Warning: File not found: {filename}")
-
-        if not all_expenses:
-            raise ValueError(
-                f"No valid expense files found. Checked {len(file_list)} files. Please verify file paths."
-            )
-
-        combined = pd.concat(all_expenses, ignore_index=True)
-        return combined
+    def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
+        return _StatementParser().parse(page_texts)

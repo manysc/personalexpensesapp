@@ -1,257 +1,110 @@
-import io
+"""Chase checking statements.
+
+Transactions are listed as ``MM/DD Description $Amount`` under section headers that say
+whether they are deposits or withdrawals, e.g.::
+
+    DEPOSITS AND ADDITIONS
+    DATE DESCRIPTION AMOUNT
+    12/23 Zelle Payment From Jane Doe Wfct0Yclh2Kt $600.00
+    Total Deposits and Additions $600.00
+"""
+
+from __future__ import annotations
+
 import logging
 import re
+from enum import Enum
+from typing import Optional, Sequence
 
-import pandas as pd
-import pdfplumber
-
-from personal_expenses_app.core.rule_based_expense_categorizer import (
-    RuleBasedExpenseCategorizer,
+from personal_expenses_app.infrastructure.statement_loader import (
+    StatementLoader,
+    Transaction,
+    parse_amount,
 )
-from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
-from personal_expenses_app.infrastructure.statement_period import resolve_statement_period
+from personal_expenses_app.infrastructure.statement_period import StatementPeriod
 
 logger = logging.getLogger(__name__)
 
 
-class ChaseFileLoader:
-    def __init__(self):
-        super().__init__()
+class _Section(Enum):
+    CREDITS = "credits"
+    DEBITS = "debits"
 
-    @staticmethod
-    def _parse_chase_transaction_line(line, year="2025"):
-        """
-        Parse a single Chase transaction line.
-        Format: MM/DD Description $Amount
-        Example: 12/23 Zelle Payment From Carmen Samaniego Wfct0Yclh2Kt $600.00
 
-        Returns: dict with Date, Description, amount or None if not a transaction line
-        """
-        if "Remote Online Deposit" in line:
-            logger.info(f"line with Remote Online Deposit: {line}")
-        # Match lines that start with date MM/DD
-        match = re.match(
-            r"^(\d{1,2}/\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})$", line.strip()
-        )
-        if not match:
-            return None
+_SECTION_TOTAL_PREFIXES = ("Total Deposits", "Total Electronic", "Total Other Withdrawals")
+_END_OF_SECTION_MARKER = "*end*"
 
-        date_str = match.group(1)
-        description = match.group(2).strip()
-        amount_str = match.group(3)
+_TRANSACTION = re.compile(r"^(\d{1,2})/(\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})$")
+# A page break can scatter a transaction's month digits into the "*end*" marker, e.g.
+#   "*end*deposi0ts and additio2ns /05 Zelle Payment From ... 1,325.00"
+# (the "02" of "02/05"). What survives is "/DD description amount".
+_GARBLED_TRANSACTION = re.compile(r"/(\d{2})\s+(.+?)\s+([\d,]+\.\d{2})$")
 
-        # Remove $ and commas from amount
-        amount = float(amount_str.replace(",", "").replace("$", ""))
 
-        return {
-            "Date": f"{date_str}/{year}",
-            "Description": description,
-            "Amount": amount,
-        }
+def _transaction(section: _Section, month: int, day: int, description: str, amount: float) -> Transaction:
+    if section is _Section.CREDITS:
+        return Transaction(month, day, description, credit=amount)
+    return Transaction(month, day, description, debit=amount)
 
-    def _extract_transactions_from_pdf(self, filename):
-        """
-        Extract transaction data from a Chase PDF statement.
-        Returns a DataFrame with Date, Description, Debit, and Credit columns.
 
-        `filename` is an S3 object key (e.g. "resources/chase/2025/chase-jan-2025.pdf"),
-        fetched from SeaweedFS rather than the local filesystem.
+def _section_started_by(line: str, stripped: str) -> Optional[_Section]:
+    if "DEPOSITS AND ADDITIONS" in line:
+        return _Section.CREDITS
+    if "ELECTRONIC WITHDRAWALS" in line:
+        return _Section.DEBITS
+    if "OTHER WITHDRAWALS" in line and not stripped.startswith("Total"):
+        return _Section.DEBITS
+    return None
 
-        Chase format has two sections:
-        - DEPOSITS AND ADDITIONS (credits)
-        - ELECTRONIC WITHDRAWALS (debits)
-        """
-        pdf_bytes = get_object_bytes(filename)
 
-        credits = []
-        debits = []
+def _recover_garbled_transaction(
+    stripped: str, section: _Section, period: StatementPeriod
+) -> Optional[Transaction]:
+    """Rebuild the transaction a page break merged into an "*end*" marker, if there is one.
 
-        # Extract year and month from filename
-        year_match = re.search(r"-(\w+)-(\d{4})", filename)
-        year = year_match.group(2) if year_match else "2025"
-        statement_month = year_match.group(1) if year_match else "jan"
-        month_map = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-        }
-        statement_month_num = month_map.get(statement_month.lower(), 1)
+    Its month is unreadable, so it is taken to be the statement's closing month.
+    """
+    match = _GARBLED_TRANSACTION.search(stripped)
+    if not match:
+        return None
+    day, description, amount = match.groups()
+    transaction = _transaction(section, period.month, int(day), description.strip(), parse_amount(amount))
+    logger.info("Recovered garbled transaction from *end* line: %s", transaction)
+    return transaction
 
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            # Date transactions from the period printed in the PDF; the filename's
-            # month/year is only a fallback (and can be wrong if mislabeled).
-            year, statement_month_num = resolve_statement_period(
-                "chase",
-                pdf.pages[0].extract_text() if pdf.pages else "",
-                filename,
-                year,
-                statement_month_num,
-            )
-            current_section = None
 
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
+class ChaseFileLoader(StatementLoader):
+    bank = "chase"
+
+    def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
+        transactions: dict[_Section, list[Transaction]] = {_Section.CREDITS: [], _Section.DEBITS: []}
+        section: Optional[_Section] = None
+
+        for text in page_texts:
+            for line in text.split("\n"):
+                stripped = line.strip()
+
+                started = _section_started_by(line, stripped)
+                if started:
+                    section = started
+                    continue
+                if stripped.startswith(_SECTION_TOTAL_PREFIXES):
+                    section = None
+                    continue
+                if stripped.startswith(_END_OF_SECTION_MARKER) and section:
+                    recovered = _recover_garbled_transaction(stripped, section, period)
+                    if recovered:
+                        transactions[section].append(recovered)
+                    section = None
+                    continue
+                if not section or "DATE DESCRIPTION AMOUNT" in line:
                     continue
 
-                lines = text.split("\n")
+                match = _TRANSACTION.match(stripped)
+                if match:
+                    month, day, description, amount = match.groups()
+                    transactions[section].append(
+                        _transaction(section, int(month), int(day), description.strip(), parse_amount(amount))
+                    )
 
-                for line in lines:
-                    line_stripped = line.strip()
-
-                    # Detect section headers
-                    if "DEPOSITS AND ADDITIONS" in line:
-                        current_section = "credits"
-                        continue
-                    elif "ELECTRONIC WITHDRAWALS" in line:
-                        current_section = "debits"
-                        continue
-                    elif "OTHER WITHDRAWALS" in line and not line_stripped.startswith("Total"):
-                        current_section = "debits"
-                        continue
-                    elif line_stripped.startswith(
-                        "Total Deposits"
-                    ) or line_stripped.startswith("Total Electronic") or line_stripped.startswith("Total Other Withdrawals"):
-                        current_section = None
-                        continue
-                    elif line_stripped.startswith("*end*") and current_section:
-                        # PDF page-boundary garbling can embed a transaction date's digits
-                        # into the *end* marker text, e.g.:
-                        #   "*end*deposi0ts and additio2ns /05 Zelle Payment From ... 1,325.00"
-                        # (the "02" from "02/05" gets split into "deposi0ts" and "additio2ns")
-                        # Recover by searching for a partial date (/DD) + description + amount.
-                        end_txn_match = re.search(
-                            r"/(\d{2})\s+(.+?)\s+([\d,]+\.\d{2})$", line_stripped
-                        )
-                        if end_txn_match:
-                            day = end_txn_match.group(1)
-                            description = end_txn_match.group(2).strip()
-                            amount = float(end_txn_match.group(3).replace(",", ""))
-                            month = str(statement_month_num).zfill(2)
-                            transaction = {
-                                "Date": f"{month}/{day}/{year}",
-                                "Description": description,
-                                "Amount": amount,
-                            }
-                            if current_section == "credits":
-                                credits.append(transaction)
-                            elif current_section == "debits":
-                                debits.append(transaction)
-                            logger.info(
-                                f"Recovered garbled transaction from *end* line: {transaction}"
-                            )
-                        current_section = None
-                        continue
-
-                    # Skip headers and empty lines
-                    if not current_section or not line_stripped:
-                        continue
-
-                    if "DATE DESCRIPTION AMOUNT" in line:
-                        continue
-
-                    # Try to parse the line as a transaction
-                    transaction = self._parse_chase_transaction_line(line, year)
-                    if transaction:
-                        if current_section == "credits":
-                            credits.append(transaction)
-                        elif current_section == "debits":
-                            debits.append(transaction)
-
-        # Combine into single list with Debit/Credit columns
-        all_transactions = []
-
-        for credit in credits:
-            all_transactions.append(
-                {
-                    "Date": credit["Date"],
-                    "Description": credit["Description"],
-                    "Debit": None,
-                    "Credit": credit["Amount"],
-                }
-            )
-
-        for debit in debits:
-            all_transactions.append(
-                {
-                    "Date": debit["Date"],
-                    "Description": debit["Description"],
-                    "Debit": debit["Amount"],
-                    "Credit": None,
-                }
-            )
-
-        if not all_transactions:
-            raise ValueError(f"No transactions found in PDF: {filename}")
-
-        df = pd.DataFrame(all_transactions)
-        df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce")
-        # Adjust year for transactions from the previous year
-        # (e.g., December transactions appearing in a January statement)
-        mask = df["Date"].dt.month > statement_month_num
-        if mask.any():
-            df.loc[mask, "Date"] = df.loc[mask, "Date"].apply(lambda d: d.replace(year=d.year - 1))
-        df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
-        df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
-        df["Bank"] = "chase"
-
-        # Sort by date
-        df = df.sort_values("Date").reset_index(drop=True)
-
-        return df
-
-    @staticmethod
-    def load_expenses(filename):
-        """Load only expenses (debits) from a PDF file."""
-        loader = ChaseFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Debit"].notnull()]
-
-    @staticmethod
-    def load_credits(filename):
-        """Load only credits from a PDF file."""
-        loader = ChaseFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Credit"].notnull()]
-
-    @staticmethod
-    def load_expenses_and_credits(filename):
-        """
-        Load both expenses (debits) and credits from a PDF file and combine them.
-        Returns a DataFrame with both debits and credits.
-        """
-        loader = ChaseFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        # Only return rows that have either a debit or credit (not both null)
-        return df[df["Debit"].notnull() | df["Credit"].notnull()]
-
-    @staticmethod
-    def load_and_label_multiple_files(file_list):
-        """
-        Load and categorize expenses from multiple PDF files.
-        Similar to CsvFileLoader.load_and_label_multiple_files.
-
-        Args:
-            file_list: List of PDF file paths to process
-
-        Returns:
-            Combined DataFrame with all transactions categorized
-        """
-        all_expenses = []
-        categorized_expenses = RuleBasedExpenseCategorizer()
-        chase_file_loader = ChaseFileLoader()
-
-        for filename in file_list:
-            if object_exists(filename):
-                df = chase_file_loader.load_expenses_and_credits(filename)
-                labeled = categorized_expenses.categorize_expenses(df)
-                all_expenses.append(labeled)
-            else:
-                print(f"Warning: File not found: {filename}")
-
-        if not all_expenses:
-            raise ValueError(
-                f"No valid expense files found. Checked {len(file_list)} files. Please verify file paths."
-            )
-
-        combined = pd.concat(all_expenses, ignore_index=True)
-        return combined
+        return transactions[_Section.CREDITS] + transactions[_Section.DEBITS]

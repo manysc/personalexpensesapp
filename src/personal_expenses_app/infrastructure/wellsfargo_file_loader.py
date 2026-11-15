@@ -1,271 +1,93 @@
-import io
+"""Wells Fargo checking statements.
+
+The "Transaction history" table lists one transaction per row::
+
+    Date Number Description Additions Subtractions balance
+    1/2 Bank of America Mortgage 250102 P12739652 798.44 3,157.01
+
+The last amount on a row is the running balance when the row has two amounts. A long
+description wraps, pushing the amounts onto a following line.
+"""
+
+from __future__ import annotations
+
 import re
+from typing import Optional, Sequence
 
-import pandas as pd
-import pdfplumber
-
-from personal_expenses_app.core.rule_based_expense_categorizer import (
-    RuleBasedExpenseCategorizer,
+from personal_expenses_app.infrastructure.statement_loader import (
+    StatementLoader,
+    Transaction,
+    parse_amount,
 )
-from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
-from personal_expenses_app.infrastructure.statement_period import resolve_statement_period
+from personal_expenses_app.infrastructure.statement_period import StatementPeriod
+
+_STARTS_WITH_DATE = re.compile(r"^\d{1,2}/\d{1,2}\s+")
+_DATED_LINE = re.compile(r"^(\d{1,2})/(\d{1,2})\s+(.+)$")
+_AMOUNT = re.compile(r"[\d,]+\.\d{2}")
+
+_COLUMN_HEADER_MARKERS = ("Date Number Description", "Deposits/", "Withdrawals/")
+# The statement does not say which column an amount came from once it is text, so
+# additions are recognised by their description.
+_CREDIT_KEYWORDS = ("transfer from", "deposit", "credit", "interest", "refund")
 
 
-class WellsfargoFileLoader:
-    def __init__(self):
-        super().__init__()
+def _parse_transaction(row: str) -> Optional[Transaction]:
+    """Parse a complete ``M/D Description Amount [Balance]`` row; None if it is not one yet."""
+    match = _DATED_LINE.match(row.strip())
+    if not match:
+        return None
+    month, day, rest = match.groups()
 
-    @staticmethod
-    def _parse_wellsfargo_transaction_line(line, year="2025"):
-        """
-        Parse a single Wells Fargo transaction line.
-        Format: M/D Description [Amount1] [Amount2]
-        Where Amount2 (if present) is the ending balance, and Amount1 is the transaction amount.
-        Some lines only have the transaction amount without the ending balance.
+    amounts = _AMOUNT.findall(rest)
+    if not amounts:
+        return None
+    amount = parse_amount(amounts[-2] if len(amounts) >= 2 else amounts[0])
 
-        Returns: dict with Date, Description, Debit, Credit or None if not a transaction line
-        """
-        # Match lines that start with date M/D or MM/DD
-        match = re.match(r"^(\d{1,2}/\d{1,2})\s+(.+)$", line.strip())
-        if not match:
-            return None
+    description = rest
+    for printed_amount in amounts:
+        description = description.replace(printed_amount, "").strip()
+    description = " ".join(description.split())
 
-        date_str = match.group(1)
-        rest = match.group(2)
+    lowered = description.lower()
+    if any(keyword in lowered for keyword in _CREDIT_KEYWORDS):
+        return Transaction(int(month), int(day), description, credit=amount)
+    return Transaction(int(month), int(day), description, debit=amount)
 
-        # Extract all amounts from the line
-        amounts = re.findall(r"[\d,]+\.\d{2}", rest)
 
-        # Need at least one amount (transaction amount)
-        if len(amounts) < 1:
-            return None
+class WellsfargoFileLoader(StatementLoader):
+    bank = "wellsfargo"
 
-        # Remove amounts from description
-        description = rest
-        for amt in amounts:
-            description = description.replace(amt, "").strip()
+    def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
+        transactions: list[Transaction] = []
+        in_transaction_history = False
+        wrapped_row: Optional[str] = None  # A row still waiting for the line with its amounts.
 
-        # Clean up description
-        description = " ".join(description.split())
-
-        # Determine transaction amount
-        if len(amounts) >= 2:
-            # Second to last amount is the transaction amount
-            # Last amount is the balance (ignore it)
-            transaction_amount = float(amounts[-2].replace(",", ""))
-        else:
-            # Only one amount - it's the transaction amount
-            transaction_amount = float(amounts[0].replace(",", ""))
-
-        # Determine if credit or debit based on keywords
-        credit_keywords = [
-            "transfer from",
-            "deposit",
-            "credit",
-            "interest",
-            "refund",
-            "recurring transfer from",
-        ]
-        is_credit = any(keyword in description.lower() for keyword in credit_keywords)
-
-        return {
-            "Date": f"{date_str}/{year}",
-            "Description": description,
-            "Debit": None if is_credit else transaction_amount,
-            "Credit": transaction_amount if is_credit else None,
-        }
-
-    def _extract_transactions_from_pdf(self, filename):
-        """
-        Extract transaction data from a Wells Fargo PDF statement.
-        Returns a DataFrame with Date, Description, Debit, and Credit columns.
-
-        Wells Fargo format:
-        Date Number Description Additions Subtractions balance
-        1/2 Bank of America Mortgage 250102 P12739652 , Salas M 798.44 3,157.01
-
-        Some transactions span multiple lines when description is long.
-
-        `filename` is an S3 object key (e.g. "resources/wellsfargo/2025/wellsfargo-jan-2025.pdf"),
-        fetched from SeaweedFS rather than the local filesystem.
-        """
-        pdf_bytes = get_object_bytes(filename)
-
-        transactions = []
-
-        # Extract year and month from filename
-        year_match = re.search(r"-(\w+)-(\d{4})", filename)
-        year = year_match.group(2) if year_match else "2025"
-        statement_month = year_match.group(1) if year_match else "jan"
-        month_map = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-        }
-        statement_month_num = month_map.get(statement_month.lower(), 1)
-
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            # Date transactions from the period printed in the PDF; the filename's
-            # month/year is only a fallback (and can be wrong if mislabeled).
-            year, statement_month_num = resolve_statement_period(
-                "wellsfargo",
-                pdf.pages[0].extract_text() if pdf.pages else "",
-                filename,
-                year,
-                statement_month_num,
-            )
-            in_transaction_section = False
-            pending_line = None  # Store line that might continue on next line
-
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
+        for text in page_texts:
+            for line in text.split("\n"):
+                if "Transaction history" in line:
+                    in_transaction_history = True
+                    continue
+                if line.strip().startswith("Totals"):
+                    in_transaction_history = False
+                    wrapped_row = None
+                    continue
+                if not in_transaction_history:
+                    continue
+                if any(marker in line for marker in _COLUMN_HEADER_MARKERS):
                     continue
 
-                lines = text.split("\n")
+                if _STARTS_WITH_DATE.match(line):
+                    row = line
+                elif wrapped_row:
+                    row = f"{wrapped_row} {line.strip()}"
+                else:
+                    continue
 
-                for i, line in enumerate(lines):
-                    # Check if we're in the transaction history section
-                    if "Transaction history" in line:
-                        in_transaction_section = True
-                        continue
-
-                    # Stop at totals line or other end markers
-                    if line.strip().startswith("Totals"):
-                        in_transaction_section = False
-                        # Process any pending line before stopping
-                        if pending_line:
-                            transaction = self._parse_wellsfargo_transaction_line(
-                                pending_line, year
-                            )
-                            if transaction:
-                                transactions.append(transaction)
-                            pending_line = None
-                        continue
-
-                    # Only process if we're in the transaction section
-                    if not in_transaction_section:
-                        continue
-
-                    # Skip header lines
-                    if (
-                        "Date Number Description" in line
-                        or "Deposits/" in line
-                        or "Withdrawals/" in line
-                    ):
-                        continue
-
-                    # Check if current line starts with a date (potential new transaction)
-                    if re.match(r"^\d{1,2}/\d{1,2}\s+", line):
-                        # Process any pending line first
-                        if pending_line:
-                            transaction = self._parse_wellsfargo_transaction_line(
-                                pending_line, year
-                            )
-                            if transaction:
-                                transactions.append(transaction)
-                            pending_line = None
-
-                        # Try to parse current line
-                        transaction = self._parse_wellsfargo_transaction_line(
-                            line, year
-                        )
-                        if transaction:
-                            # Successfully parsed, add it
-                            transactions.append(transaction)
-                        else:
-                            # Couldn't parse (maybe needs next line), store it
-                            pending_line = line
-                    elif pending_line:
-                        # This line might be continuation of previous transaction
-                        # Merge and try to parse again
-                        merged_line = pending_line + " " + line.strip()
-                        transaction = self._parse_wellsfargo_transaction_line(
-                            merged_line, year
-                        )
-                        if transaction:
-                            transactions.append(transaction)
-                            pending_line = None
-                        else:
-                            # Still can't parse, keep accumulating
-                            pending_line = merged_line
-
-            # Process any remaining pending line
-            if pending_line:
-                transaction = self._parse_wellsfargo_transaction_line(
-                    pending_line, year
-                )
+                transaction = _parse_transaction(row)
                 if transaction:
                     transactions.append(transaction)
+                    wrapped_row = None
+                else:
+                    wrapped_row = row
 
-        if not transactions:
-            raise ValueError(f"No transactions found in PDF: {filename}")
-
-        df = pd.DataFrame(transactions)
-        df["Date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce")
-        # Adjust year for transactions from the previous year
-        # (e.g., December transactions appearing in a January statement)
-        mask = df["Date"].dt.month > statement_month_num
-        if mask.any():
-            df.loc[mask, "Date"] = df.loc[mask, "Date"].apply(lambda d: d.replace(year=d.year - 1))
-        df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce")
-        df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce")
-        df["Bank"] = "wellsfargo"
-
-        return df
-
-    @staticmethod
-    def load_expenses(filename):
-        """Load only expenses (debits) from a PDF file."""
-        loader = WellsfargoFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Debit"].notnull()]
-
-    @staticmethod
-    def load_credits(filename):
-        """Load only credits from a PDF file."""
-        loader = WellsfargoFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        return df[df["Credit"].notnull()]
-
-    @staticmethod
-    def load_expenses_and_credits(filename):
-        """
-        Load both expenses (debits) and credits from a PDF file and combine them.
-        Returns a DataFrame with both debits and credits.
-        """
-        loader = WellsfargoFileLoader()
-        df = loader._extract_transactions_from_pdf(filename)
-        # Only return rows that have either a debit or credit (not both null)
-        return df[df["Debit"].notnull() | df["Credit"].notnull()]
-
-    @staticmethod
-    def load_and_label_multiple_files(file_list):
-        """
-        Load and categorize expenses from multiple PDF files.
-        Similar to CsvFileLoader.load_and_label_multiple_files.
-
-        Args:
-            file_list: List of PDF file paths to process
-
-        Returns:
-            Combined DataFrame with all transactions categorized
-        """
-        all_expenses = []
-        categorized_expenses = RuleBasedExpenseCategorizer()
-        pdf_file_loader = WellsfargoFileLoader()
-
-        for filename in file_list:
-            if object_exists(filename):
-                df = pdf_file_loader.load_expenses_and_credits(filename)
-                labeled = categorized_expenses.categorize_expenses(df)
-                all_expenses.append(labeled)
-            else:
-                print(f"Warning: File not found: {filename}")
-
-        if not all_expenses:
-            raise ValueError(
-                f"No valid expense files found. Checked {len(file_list)} files. Please verify file paths."
-            )
-
-        combined = pd.concat(all_expenses, ignore_index=True)
-        return combined
+        return transactions
