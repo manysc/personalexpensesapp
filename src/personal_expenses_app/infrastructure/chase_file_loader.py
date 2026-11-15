@@ -9,6 +9,7 @@ from personal_expenses_app.core.rule_based_expense_categorizer import (
     RuleBasedExpenseCategorizer,
 )
 from personal_expenses_app.infrastructure.s3_storage import get_object_bytes, object_exists
+from personal_expenses_app.infrastructure.statement_period import resolve_statement_period
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,15 @@ class ChaseFileLoader:
         statement_month_num = month_map.get(statement_month.lower(), 1)
 
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            # Date transactions from the period printed in the PDF; the filename's
+            # month/year is only a fallback (and can be wrong if mislabeled).
+            year, statement_month_num = resolve_statement_period(
+                "chase",
+                pdf.pages[0].extract_text() if pdf.pages else "",
+                filename,
+                year,
+                statement_month_num,
+            )
             current_section = None
 
             for page in pdf.pages:
