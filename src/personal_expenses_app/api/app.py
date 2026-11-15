@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 
 from personal_expenses_app.core.rule_based_expense_categorizer import RULE_BASED_CATEGORIES, RuleBasedExpenseCategorizer
 from personal_expenses_app.core.summarizer import Summarizer
+from personal_expenses_app.core.tenant_matching import tenant_match_tokens
 from personal_expenses_app.infrastructure import s3_storage
 from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFileLoader
 from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
@@ -1433,14 +1434,14 @@ class SyncExpensesResponse(BaseModel):
 def _sync_property_by_tenant(session: Session, prop: "_RentalProperty") -> int:
     """Assign prop to expenses whose description contains keywords from its tenant name.
 
-    The tenant string is split on whitespace and '&'; each token of 2+ characters
-    is matched case-insensitively against the expense description.
-
-    Normally any single token matching is enough (OR logic). However, if another
-    rental property has a tenant with the same first name, matching on the first
-    name alone would be ambiguous, so in that case the first name AND at least
-    one other token (e.g. the last name) must both be present (AND logic) to
-    disambiguate between the two tenants.
+    The tenant string is split on whitespace and '&' into name tokens (2+ characters),
+    matched case-insensitively against the expense description. Tokens that also appear
+    in another property's tenant name (e.g. a shared first name) are ignored because they
+    can't tell the properties apart; any one of the remaining tokens is enough. So with
+    tenants "Jose Tellez & Veronica Flores" and "Jose Soto & ...", a payment from
+    "Veronica Flores" links to the first property and one from just "Jose" links to
+    neither. If every token is shared, all of them must match.
+    See core/tenant_matching.py.
 
     Only expenses with no property yet are touched, so a manual assignment is
     never overwritten. Returns the number of expenses updated.
@@ -1452,8 +1453,14 @@ def _sync_property_by_tenant(session: Session, prop: "_RentalProperty") -> int:
 
     property_id = prop.id
 
-    # Split on whitespace and '&', keep only tokens with 2+ characters
-    keywords = [t.lower() for t in re.split(r"[\s&]+", prop.tenant.strip()) if len(t) >= 2]
+    other_tenants = [
+        other.tenant
+        for other in session.execute(
+            select(_RentalProperty).where(_RentalProperty.id != property_id)
+        ).scalars()
+        if other.tenant
+    ]
+    keywords, require_all = tenant_match_tokens(prop.tenant, other_tenants)
     if not keywords:
         return 0
 
@@ -1461,22 +1468,7 @@ def _sync_property_by_tenant(session: Session, prop: "_RentalProperty") -> int:
         func.lower(_AllExpense.description).contains(kw)
         for kw in keywords
     ]
-
-    first_name = keywords[0]
-    other_first_names = {
-        other.tenant.strip().split()[0].lower()
-        for other in session.execute(
-            select(_RentalProperty).where(_RentalProperty.id != property_id)
-        ).scalars()
-        if other.tenant and other.tenant.strip()
-    }
-
-    if len(keywords) > 1 and first_name in other_first_names:
-        # Ambiguous first name shared with another property's tenant: require
-        # the first name AND at least one other token (e.g. last name) to match.
-        match_condition = and_(conditions[0], or_(*conditions[1:]))
-    else:
-        match_condition = or_(*conditions)
+    match_condition = and_(*conditions) if require_all else or_(*conditions)
 
     stmt = (
         sa_update(_AllExpense)
