@@ -20,3 +20,6 @@ backups/s3/
 
 # Periodic Postgres dumps (contain personal financial data)
 backups/postgres/
+
+# SeaweedFS S3 credentials (copy seaweedfs/identities.json.example)
+seaweedfs/identities.json

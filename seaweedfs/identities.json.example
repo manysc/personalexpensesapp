@@ -4,8 +4,8 @@
       "name": "expensesapp",
       "credentials": [
         {
-          "accessKey": "expensesapp",
-          "secretKey": "dev-8f3a1c9e2b6d4f7091a5c3e8b2d6f4a7"
+          "accessKey": "REPLACE_WITH_ACCESS_KEY",
+          "secretKey": "REPLACE_WITH_SECRET_KEY"
         }
       ],
       "actions": [
