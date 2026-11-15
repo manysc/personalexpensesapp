@@ -119,6 +119,30 @@ On a network with Zscaler, `registry.ollama.ai` must be allowlisted for `ollama 
 
 The frontend uses `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3.2`).
 
+## Claude Connection (MCP Server)
+
+`mcp_server/expenses_mcp_server.py` is an MCP server that lets Claude read and update your data through the backend API. It needs the backend running on port 8000 and [uv](https://docs.astral.sh/uv/). It declares its own dependencies (`mcp`, `httpx`), so it does not touch the app's `.venv`.
+
+Add it to the Claude desktop app (**Settings → Developer → Edit Config**, file `%APPDATA%\Claude\claude_desktop_config.json`), inside `"mcpServers"`:
+
+```json
+"expenses": {
+  "command": "uv",
+  "args": ["run", "--script", "C:\\Users\\T-SALAS\\GitHub\\personalexpensesapp\\mcp_server\\expenses_mcp_server.py"],
+  "env": { "EXPENSES_API_URL": "http://localhost:8000" }
+}
+```
+
+Then fully quit and reopen the Claude desktop app. If it can't find `uv`, use its full path as `command` (run `(Get-Command uv).Source` in PowerShell to get it).
+
+Tools:
+
+- **Read:** `list_expenses`, `get_expense`, `get_spending_summary` (totals by month/category/property), `get_property_summary`, `list_commented_expenses`, `list_action_items`, `list_categories`, `list_banks`, `list_rental_properties`, `list_vehicles`, `list_vehicle_services`, `list_statement_months`
+- **Write:** `create_expense`, `update_expense`, `set_expense_category`, `bulk_update_expenses`, `attach_receipt`, `resolve_action_item`, `create_category`, `update_category`, `create_rental_property`, `update_rental_property`, `sync_property_expenses`, `create_vehicle`, `update_vehicle`, `add_vehicle_service`, `update_vehicle_service`, `upload_statement`, `run_import_pipeline`
+- **Delete** (marked destructive): `delete_expense`, `delete_receipt`, `delete_category`, `delete_rental_property`, `delete_vehicle`, `delete_vehicle_service`
+
+Test it without Claude: `npx @modelcontextprotocol/inspector uv run --script mcp_server/expenses_mcp_server.py`.
+
 ## Admin Tools
 
 | Tool | URL | Login |
