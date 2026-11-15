@@ -26,11 +26,12 @@ The backend is a FastAPI app served by uvicorn on the host (not in Docker). Comm
 ```powershell
 cp .env.example .env          # set DATABASE_URL
 cp s3.json.example s3.json    # set access_key / secret_key
+cp seaweedfs/identities.json.example seaweedfs/identities.json   # same keys as s3.json
 ```
 
-Both files are gitignored. To use the Postgres container from `docker-compose.yml`, set
-`DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@localhost:5432/expensesassistant`
-(the password is in `docker-compose.yml`). The S3 keys must match `seaweedfs/identities.json`.
+All three are gitignored. In `.env`, choose `POSTGRES_PASSWORD` and `PGADMIN_DEFAULT_PASSWORD` (Docker Compose reads them from there) and use the same Postgres password in
+`DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@localhost:5432/expensesassistant`.
+The keys in `s3.json` and `seaweedfs/identities.json` must match.
 
 ### 2. Start Postgres and SeaweedFS
 
@@ -148,7 +149,7 @@ Test it without Claude: `npx @modelcontextprotocol/inspector uv run --script mcp
 | Tool | URL | Login |
 |---|---|---|
 | SeaweedFS Admin UI (browse stored PDFs and receipts) | http://localhost:23646 | `admin` / `admin` by default; change with `SEAWEEDFS_ADMIN_USER` / `SEAWEEDFS_ADMIN_PASSWORD` |
-| pgAdmin (Postgres) | http://localhost:5050 | Set in `docker-compose.yml` (`PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`) |
+| pgAdmin (Postgres) | http://localhost:5050 | `admin@example.com` / `PGADMIN_DEFAULT_PASSWORD` from `.env` (used when pgAdmin is first set up) |
 
 Start them with `docker compose up -d seaweedfs-admin pg_admin`.
 
