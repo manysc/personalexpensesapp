@@ -645,11 +645,11 @@ def expenses_summary(
     params: dict = {}
 
     if date_from is not None:
-        conditions.append("month_date >= :date_from::date")
+        conditions.append("month_date >= CAST(:date_from AS date)")
         params["date_from"] = date_from
     if date_to is not None:
         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        conditions.append("month_date < :date_to_exclusive::date")
+        conditions.append("month_date < CAST(:date_to_exclusive AS date)")
         params["date_to_exclusive"] = next_day
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
@@ -726,11 +726,11 @@ def expenses_property_summary(
     params: dict = {}
 
     if date_from is not None:
-        conditions.append("month_date >= :date_from::date")
+        conditions.append("month_date >= CAST(:date_from AS date)")
         params["date_from"] = date_from
     if date_to is not None:
         next_day = (datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        conditions.append("month_date < :date_to_exclusive::date")
+        conditions.append("month_date < CAST(:date_to_exclusive AS date)")
         params["date_to_exclusive"] = next_day
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
