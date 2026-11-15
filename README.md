@@ -136,6 +136,14 @@ Add it to the Claude desktop app (**Settings → Developer → Edit Config**, fi
 
 Then fully quit and reopen the Claude desktop app. If it can't find `uv`, use its full path as `command` (run `(Get-Command uv).Source` in PowerShell to get it).
 
+How it runs:
+
+- You don't start it yourself. The Claude desktop app launches it in the background when the app opens, using the `command`/`args` above, and stops it when the app quits.
+- It talks to Claude over standard input/output (no port of its own); each tool call becomes an HTTP request to the backend at `EXPENSES_API_URL`.
+- On first launch `uv` installs `mcp` and `httpx` into a cached environment of its own; later launches reuse it.
+- The backend (port 8000) plus Postgres and SeaweedFS must be running, or tools return a "Cannot reach the expenses backend" error.
+- After editing `expenses_mcp_server.py` or the config, fully quit and reopen the Claude desktop app to load the changes.
+
 Tools:
 
 - **Read:** `list_expenses`, `get_expense`, `get_spending_summary` (totals by month/category/property), `get_property_summary`, `list_commented_expenses`, `list_action_items`, `list_categories`, `list_banks`, `list_rental_properties`, `list_vehicles`, `list_vehicle_services`, `list_statement_months`
