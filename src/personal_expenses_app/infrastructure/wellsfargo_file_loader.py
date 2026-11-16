@@ -7,6 +7,12 @@ The "Transaction history" table lists one transaction per row::
 
 The last amount on a row is the running balance when the row has two amounts. A long
 description wraps, pushing the amounts onto a following line.
+
+The "Statement period activity summary" above the table gives the totals the transactions
+are checked against::
+
+    Deposits/Additions 950.00
+    Withdrawals/Subtractions - 1,123.95
 """
 
 from __future__ import annotations
@@ -20,10 +26,13 @@ from personal_expenses_app.infrastructure.statement_loader import (
     parse_amount,
 )
 from personal_expenses_app.infrastructure.statement_period import StatementPeriod
+from personal_expenses_app.infrastructure.statement_reconciliation import StatementTotals
 
 _STARTS_WITH_DATE = re.compile(r"^\d{1,2}/\d{1,2}\s+")
 _DATED_LINE = re.compile(r"^(\d{1,2})/(\d{1,2})\s+(.+)$")
 _AMOUNT = re.compile(r"[\d,]+\.\d{2}")
+_DEPOSITS_TOTAL = re.compile(r"Deposits/Additions\s+\$?([\d,]+\.\d{2})")
+_WITHDRAWALS_TOTAL = re.compile(r"Withdrawals/Subtractions\s+-\s*\$?([\d,]+\.\d{2})")
 
 _COLUMN_HEADER_MARKERS = ("Date Number Description", "Deposits/", "Withdrawals/")
 # The statement does not say which column an amount came from once it is text, so
@@ -91,3 +100,11 @@ class WellsfargoFileLoader(StatementLoader):
                     wrapped_row = row
 
         return transactions
+
+    def _printed_totals(self, page_texts: Sequence[str]) -> Optional[StatementTotals]:
+        text = "\n".join(page_texts)
+        deposits = _DEPOSITS_TOTAL.search(text)
+        withdrawals = _WITHDRAWALS_TOTAL.search(text)
+        if not deposits or not withdrawals:
+            return None
+        return StatementTotals(parse_amount(withdrawals.group(1)), parse_amount(deposits.group(1)))

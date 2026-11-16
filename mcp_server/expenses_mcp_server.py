@@ -204,7 +204,9 @@ def list_commented_expenses(date_from: str | None = None, date_to: str | None = 
 
 @mcp.tool(annotations=READ)
 def list_action_items(include_resolved: bool = False) -> Any:
-    """Open action items: unpaid rent per property and >=5% month-over-month utility changes."""
+    """Open action items: unpaid rent per property, >=5% month-over-month utility changes, and
+    statement follow-ups (statement_unverified: a statement does not add up to its printed totals;
+    statement_not_stored / statement_not_imported: transactions on a statement are not in the app)."""
     return _request("GET", "/expenses/action-items", params=dict(include_resolved=include_resolved))
 
 
@@ -364,7 +366,11 @@ def delete_receipt(expense_id: int) -> Any:
 
 @mcp.tool(annotations=UPDATE)
 def resolve_action_item(item_id: int) -> Any:
-    """Mark an action item (e.g. unpaid rent alert) as resolved."""
+    """Mark an action item (e.g. unpaid rent alert) as resolved.
+
+    For a statement_not_stored item this means "keep that transaction out": later imports skip it.
+    Confirm with the user before resolving one of those.
+    """
     return _request("POST", f"/expenses/action-items/{item_id}/resolve")
 
 
@@ -516,6 +522,24 @@ def upload_statement(bank: str, year: str, month: str, file_path: str) -> Any:
         raise ExpensesApiError(f"File not found: {p}")
     with p.open("rb") as fh:
         return _request("POST", f"/statements/{bank}/{year}/{month}", files={"file": (p.name, fh, "application/pdf")})
+
+
+@mcp.tool(annotations=READ)
+def reconcile_statements(year: str, bank: str | None = None, month: str | None = None) -> Any:
+    """Check uploaded statements against their own printed totals and the stored expenses.
+
+    For each statement of the year (optionally one bank and/or one month, jan..dec): the totals
+    read by the parser, the totals printed on the statement, whether they agree (`adds_up`), and
+    any transactions on the statement that are not in the database (`missing`). `complete` is true
+    when the statement adds up and every transaction is stored. Read-only; to load missing rows,
+    run_import_pipeline for that bank and month.
+    """
+    return _request(
+        "GET",
+        f"/reconciliation/{year}",
+        params=dict(bank=bank, month=month),
+        timeout=max(TIMEOUT, 300),
+    )
 
 
 @mcp.tool(annotations=WRITE)

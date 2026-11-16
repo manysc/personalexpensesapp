@@ -24,6 +24,7 @@ from personal_expenses_app.infrastructure.citi_file_loader import CitiFileLoader
 from personal_expenses_app.infrastructure.pdf_text import extract_page_texts
 from personal_expenses_app.infrastructure.s3_storage import get_object_bytes
 from personal_expenses_app.infrastructure.statement_loader import StatementLoader
+from personal_expenses_app.infrastructure.statement_reconciliation import Reconciliation
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import WellsfargoFileLoader
 
 logger = logging.getLogger(__name__)
@@ -82,16 +83,20 @@ class StatementBatch:
 
     def load(self, bank: str, key: str) -> pd.DataFrame:
         """Return the transactions of one statement, as its bank's loader would."""
-        loader = LOADERS[bank]
+        return LOADERS[bank].parse_statement(key, self._page_texts_of(key))
+
+    def read(self, bank: str, key: str) -> tuple[pd.DataFrame, Reconciliation]:
+        """Return one statement's transactions and how they compare with its printed totals."""
+        return LOADERS[bank].read_statement(key, self._page_texts_of(key))
+
+    def _page_texts_of(self, key: str) -> list[str]:
         extraction = self._page_texts.get(key)
-        if extraction is None:
-            return loader.load_expenses_and_credits(key)
-        try:
-            page_texts = extraction.result()
-        except BrokenProcessPool:
-            logger.warning("Statement worker processes failed; reading %s in-process", key)
-            return loader.load_expenses_and_credits(key)
-        return loader.parse_statement(key, page_texts)
+        if extraction is not None:
+            try:
+                return extraction.result()
+            except BrokenProcessPool:
+                logger.warning("Statement worker processes failed; reading %s in-process", key)
+        return extract_page_texts(get_object_bytes(key))
 
     def _start_extracting(self) -> None:
         try:

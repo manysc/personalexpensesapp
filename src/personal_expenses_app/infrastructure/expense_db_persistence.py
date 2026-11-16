@@ -22,8 +22,8 @@ class _Base(DeclarativeBase):
 class _AllExpense(_Base):
     __tablename__ = "all_expenses"
     __table_args__ = (
-        # NULLS NOT DISTINCT: every row has a NULL debit or credit, and the upsert in
-        # save_expenses only finds the existing row if NULLs compare equal.
+        # Every row lacks a debit or a credit. Imports store the missing one as NaN, which
+        # equals itself; manual entries store NULL, which only does with NULLS NOT DISTINCT.
         UniqueConstraint(
             "date", "bank", "description", "debit", "credit",
             name="uix_expense_natural_key",
@@ -99,6 +99,19 @@ _MIGRATIONS = (
 )
 
 
+_NATURAL_KEY_COLUMNS = ["Date", "Bank", "Description", "Debit", "Credit"]
+
+
+def _natural_key(date, bank, description, debit, credit) -> tuple:
+    """Return a row's natural key in a form that is equal for a stored row and a parsed one."""
+
+    def cents(amount) -> Optional[int]:
+        is_missing = amount is None or amount != amount  # NaN is the only value unequal to itself.
+        return None if is_missing else round(float(amount) * 100)
+
+    return str(date), bank, description, cents(debit), cents(credit)
+
+
 class ExpenseDbPersistence:
     """Persists labeled expense DataFrames into the all_expenses table in a PostgreSQL database.
 
@@ -150,30 +163,9 @@ class ExpenseDbPersistence:
             labeled_expenses: DataFrame with columns Date, Bank, Description,
                               Debit, Credit, and Category.
         """
-        renamed = labeled_expenses.rename(columns=self._COLUMN_MAP)[
-            list(self._COLUMN_MAP.values())
-        ]
-        records = renamed.where(pd.notnull(renamed), None).to_dict(orient="records")
+        records = self._records(labeled_expenses, list(self._COLUMN_MAP))
         if not records:
             return
-        # Deduplicate within-batch: if two rows share the same natural key
-        # (date, bank, description, debit, credit), append " (2)", " (3)", ...
-        # so each row gets a distinct key and all occurrences are stored.
-        # NaN != NaN in Python (IEEE 754), so normalise NaN → None before
-        # using values as dict keys to ensure identical rows compare equal.
-        def _norm(v):
-            try:
-                return None if pd.isna(v) else v
-            except (TypeError, ValueError):
-                return v
-
-        seen: dict = defaultdict(int)
-        for record in records:
-            key = (_norm(record["date"]), _norm(record["bank"]), _norm(record["description"]),
-                   _norm(record["debit"]), _norm(record["credit"]))
-            seen[key] += 1
-            if seen[key] > 1:
-                record["description"] = f"{record['description']} ({seen[key]})"
         stmt = pg_insert(_AllExpense)
         upsert_stmt = stmt.on_conflict_do_update(
             constraint="uix_expense_natural_key",
@@ -188,3 +180,56 @@ class ExpenseDbPersistence:
         with Session(self._engine) as session:
             session.execute(upsert_stmt, records)
             session.commit()
+
+    def find_missing(self, expenses: pd.DataFrame) -> pd.DataFrame:
+        """Return the rows of ``expenses`` that are not stored, e.g. because they were deleted.
+
+        ``expenses`` has the columns Date, Bank, Description, Debit and Credit, as a
+        statement loader returns them; rows are matched on exactly those, the way
+        save_expenses stores them. The rows are returned with their descriptions as they
+        would be stored (see with_stored_descriptions).
+        """
+        stored_form = self.with_stored_descriptions(expenses)
+        records = self._records(stored_form, _NATURAL_KEY_COLUMNS)
+        if not records:
+            return stored_form
+        dates = [str(record["date"]) for record in records]
+        with self._engine.connect() as conn:
+            stored = conn.execute(
+                text(
+                    "SELECT date, bank, description, debit, credit FROM all_expenses "
+                    "WHERE bank = ANY(:banks) AND date >= :first AND date <= :last"
+                ),
+                {"banks": sorted({r["bank"] for r in records}), "first": min(dates), "last": max(dates)},
+            ).all()
+        stored_keys = {_natural_key(*row) for row in stored}
+        is_missing = [_natural_key(**record) not in stored_keys for record in records]
+        return stored_form[pd.Series(is_missing, index=stored_form.index, dtype=bool)]
+
+    @staticmethod
+    def with_stored_descriptions(expenses: pd.DataFrame) -> pd.DataFrame:
+        """Return a copy with each description as it is stored.
+
+        Rows sharing a natural key (date, bank, description, debit, credit) get " (2)",
+        " (3)", ... appended to the description of the repeats, so that each occurrence
+        is stored. Applying this twice changes nothing.
+        """
+        seen: dict = defaultdict(int)
+        descriptions = []
+        for date, bank, description, debit, credit in expenses[_NATURAL_KEY_COLUMNS].itertuples(index=False):
+            key = _natural_key(date, bank, description, debit, credit)
+            seen[key] += 1
+            descriptions.append(description if seen[key] == 1 else f"{description} ({seen[key]})")
+        result = expenses.copy()
+        result["Description"] = pd.Series(descriptions, index=expenses.index, dtype=object)
+        return result
+
+    def _records(self, expenses: pd.DataFrame, columns: list[str]) -> list[dict]:
+        """Convert a DataFrame to the rows to store, one dict per row.
+
+        A missing debit or credit stays NaN, and is stored as NaN: that is what the rows
+        already in the database hold, so sending NULL instead would no longer match them
+        and every re-import would insert its rows a second time.
+        """
+        renamed = self.with_stored_descriptions(expenses)[columns].rename(columns=self._COLUMN_MAP)
+        return renamed.where(pd.notnull(renamed), None).to_dict(orient="records")

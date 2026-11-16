@@ -5,6 +5,12 @@ The "Detalle de Operaciones" table has the columns
 its date (``DD MMM``) and can continue over several lines, some of them branch metadata
 (SUC, CAJA, HORA, AUT). The last line carrying amounts holds the transaction amount
 followed by the running balance.
+
+The "Resumen" block counts and totals the period's movements, which the transactions are
+checked against (in pesos)::
+
+    (+) 1 Depósitos 10,636.00
+    (-) 5 Retiros/Otros cargos 10,944.00
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from typing import Optional, Sequence
 
 from personal_expenses_app.infrastructure.statement_loader import StatementLoader, Transaction
 from personal_expenses_app.infrastructure.statement_period import StatementPeriod
+from personal_expenses_app.infrastructure.statement_reconciliation import StatementTotals
 
 PESOS_PER_DOLLAR = 18.5
 
@@ -29,6 +36,8 @@ _TRANSACTION_START = re.compile(r"^(\d{1,2})\s+([A-Z]{3})\s+(.+)$")
 _AMOUNT = re.compile(r"[\d,]+\.\d\s?\d")
 _PAGE_FOOTER = re.compile(r"Página \d+ de \d+")
 _REFERENCE_NUMBER = re.compile(r"^\d{8,}$")
+_DEPOSITS_TOTAL = re.compile(r"\(\+\)\s*(\d+)\s+Dep[oó]sitos\s+([\d,]+\.\d{2})")
+_WITHDRAWALS_TOTAL = re.compile(r"\(-\)\s*(\d+)\s+Retiros/Otros cargos\s+([\d,]+\.\d{2})")
 
 _METADATA_PREFIXES = ("SUC ", "CAJA ", "HORA ", "AUT ")
 _OPENING_BALANCE = "SALDO ANTERIOR"
@@ -38,8 +47,8 @@ _CREDIT_KEYWORDS = (
 )
 
 
-def _to_dollars(pesos: float) -> float:
-    return round(pesos / PESOS_PER_DOLLAR, 2)
+def _parse_pesos(printed_amount: str) -> float:
+    return float(printed_amount.replace(" ", "").replace(",", ""))
 
 
 def _split_amounts(text: str) -> tuple[str, list[float]]:
@@ -47,8 +56,7 @@ def _split_amounts(text: str) -> tuple[str, list[float]]:
     printed_amounts = _AMOUNT.findall(text)
     for printed_amount in printed_amounts:
         text = text.replace(printed_amount, "", 1)
-    amounts = [float(a.replace(" ", "").replace(",", "")) for a in printed_amounts]
-    return " ".join(text.split()), amounts
+    return " ".join(text.split()), [_parse_pesos(amount) for amount in printed_amounts]
 
 
 def _is_table_header(line: str) -> bool:
@@ -156,17 +164,33 @@ class _StatementParser:
         )
         self._previous_balance = balance
 
-        dollars = _to_dollars(amount)
         if is_credit:
-            self.transactions.append(Transaction(transaction.month, transaction.day, description, credit=dollars))
+            self.transactions.append(Transaction(transaction.month, transaction.day, description, credit=amount))
         else:
-            self.transactions.append(Transaction(transaction.month, transaction.day, description, debit=dollars))
+            self.transactions.append(Transaction(transaction.month, transaction.day, description, debit=amount))
 
 
 class BanamexFileLoader(StatementLoader):
     bank = "banamex"
+    currency = "MXN"
     # An account with no movements in the month is a legitimate, empty statement.
     fail_when_empty = False
 
     def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
         return _StatementParser().parse(page_texts)
+
+    def _printed_totals(self, page_texts: Sequence[str]) -> Optional[StatementTotals]:
+        text = "\n".join(page_texts)
+        deposits = _DEPOSITS_TOTAL.search(text)
+        withdrawals = _WITHDRAWALS_TOTAL.search(text)
+        if not deposits or not withdrawals:
+            return None
+        return StatementTotals(
+            debits=_parse_pesos(withdrawals.group(2)),
+            credits=_parse_pesos(deposits.group(2)),
+            debit_count=int(withdrawals.group(1)),
+            credit_count=int(deposits.group(1)),
+        )
+
+    def _to_dollars(self, amount: float) -> float:
+        return round(amount / PESOS_PER_DOLLAR, 2)

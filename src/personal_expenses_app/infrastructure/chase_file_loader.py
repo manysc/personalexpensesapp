@@ -7,6 +7,9 @@ whether they are deposits or withdrawals, e.g.::
     DATE DESCRIPTION AMOUNT
     12/23 Zelle Payment From Jane Doe Wfct0Yclh2Kt $600.00
     Total Deposits and Additions $600.00
+
+The "CHECKING SUMMARY" at the top gives one total per section, which the transactions are
+checked against. A linked Chase Savings account printed in the same PDF is not imported.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from personal_expenses_app.infrastructure.statement_loader import (
     parse_amount,
 )
 from personal_expenses_app.infrastructure.statement_period import StatementPeriod
+from personal_expenses_app.infrastructure.statement_reconciliation import StatementTotals
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +35,22 @@ class _Section(Enum):
     DEBITS = "debits"
 
 
-_SECTION_TOTAL_PREFIXES = ("Total Deposits", "Total Electronic", "Total Other Withdrawals")
+# Each section closes with "Total <section name> $amount".
+_SECTION_TOTAL_PREFIXES = (
+    "Total Deposits",
+    "Total Electronic",
+    "Total Other Withdrawals",
+    "Total ATM",
+    "Total Fees",
+)
 _END_OF_SECTION_MARKER = "*end*"
+
+_SUMMARY_HEADER = "CHECKING SUMMARY"
+_SUMMARY_FIRST_LINE = "Beginning Balance"
+_SUMMARY_LAST_LINE = "Ending Balance"
+# "Deposits and Additions 16,782.67" / "Electronic Withdrawals -17,053.49"
+_SUMMARY_LINE = re.compile(r"^.+?\s+(-?)\$?([\d,]+\.\d{2})$")
+_SAVINGS_HEADER = "SAVINGS SUMMARY"
 
 _TRANSACTION = re.compile(r"^(\d{1,2})/(\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})$")
 # A page break can scatter a transaction's month digits into the "*end*" marker, e.g.
@@ -53,6 +71,8 @@ def _section_started_by(line: str, stripped: str) -> Optional[_Section]:
     if "ELECTRONIC WITHDRAWALS" in line:
         return _Section.DEBITS
     if "OTHER WITHDRAWALS" in line and not stripped.startswith("Total"):
+        return _Section.DEBITS
+    if "ATM & DEBIT CARD WITHDRAWALS" in line or stripped == "FEES":
         return _Section.DEBITS
     return None
 
@@ -108,3 +128,26 @@ class ChaseFileLoader(StatementLoader):
                     )
 
         return transactions[_Section.CREDITS] + transactions[_Section.DEBITS]
+
+    def _printed_totals(self, page_texts: Sequence[str]) -> Optional[StatementTotals]:
+        """Add up the checking summary: negative lines are withdrawals, the rest deposits."""
+        lines = (line.strip() for text in page_texts for line in text.split("\n"))
+        if not any(_SUMMARY_HEADER in line for line in lines):
+            return None
+
+        debits = credits = 0.0
+        for line in lines:  # Continues after the header.
+            if line.startswith(_SUMMARY_LAST_LINE):
+                return StatementTotals(round(debits, 2), round(credits, 2))
+            match = _SUMMARY_LINE.match(line)
+            if not match or line.startswith(_SUMMARY_FIRST_LINE):
+                continue
+            if match.group(1):
+                debits += parse_amount(match.group(2))
+            else:
+                credits += parse_amount(match.group(2))
+        return None
+
+    def _note(self, page_texts: Sequence[str]) -> str:
+        has_savings = any(_SAVINGS_HEADER in text for text in page_texts)
+        return "(Its Chase Savings section is not imported.)" if has_savings else ""

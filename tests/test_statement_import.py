@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from personal_expenses_app.infrastructure import statement_import, statement_loader
+from personal_expenses_app.infrastructure import statement_import
 from personal_expenses_app.infrastructure.statement_import import LOADERS, StatementBatch, statement_key
 
 CHASE_KEY = "resources/chase/2026/chase-oct-2026.pdf"
@@ -38,11 +38,23 @@ def test_worker_count(monkeypatch, statements, configured, cpus, expected):
 
 
 def test_small_batch_loads_in_process(monkeypatch):
-    monkeypatch.setattr(statement_loader, "get_object_bytes", lambda key: b"pdf")
-    monkeypatch.setattr(statement_loader, "extract_page_texts", lambda pdf: CHASE_PAGES)
+    monkeypatch.setattr(statement_import, "get_object_bytes", lambda key: b"pdf")
+    monkeypatch.setattr(statement_import, "extract_page_texts", lambda pdf: CHASE_PAGES)
 
     with StatementBatch([CHASE_KEY]) as batch:
         df = batch.load("chase", CHASE_KEY)
 
     assert list(df["Description"]) == ["Acme Gym"]
     assert df["Date"].iloc[0] == pd.Timestamp("2026-10-02")
+
+
+def test_read_also_returns_the_reconciliation(monkeypatch):
+    monkeypatch.setattr(statement_import, "get_object_bytes", lambda key: b"pdf")
+    monkeypatch.setattr(statement_import, "extract_page_texts", lambda pdf: CHASE_PAGES)
+
+    with StatementBatch([CHASE_KEY]) as batch:
+        df, reconciliation = batch.read("chase", CHASE_KEY)
+
+    assert len(df) == 1
+    assert reconciliation.statement == CHASE_KEY
+    assert reconciliation.read.debits == 30.00

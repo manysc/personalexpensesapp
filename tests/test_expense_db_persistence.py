@@ -35,9 +35,10 @@ def engine(monkeypatch):
 
 
 def expenses(*rows):
-    return pd.DataFrame(
-        rows, columns=["Date", "Bank", "Description", "Debit", "Credit", "Category"]
-    ).astype({"Debit": "float64", "Credit": "float64"})
+    """Build a DataFrame shaped like a categorized statement."""
+    df = pd.DataFrame(rows, columns=["Date", "Bank", "Description", "Debit", "Credit", "Category"])
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df.astype({"Debit": "float64", "Credit": "float64"})
 
 
 GYM = ("2026-10-02", "chase", "Acme Gym", 30.0, None, "Pharmacy/Health")
@@ -81,6 +82,50 @@ def test_identical_rows_in_one_batch_are_all_kept(engine):
     with engine.connect() as conn:
         descriptions = conn.execute(text("SELECT description FROM all_expenses ORDER BY id")).scalars().all()
     assert descriptions == ["Acme Gym", "Acme Gym (2)"]
+
+
+def test_missing_amounts_are_stored_as_nan_like_the_existing_rows(engine):
+    ExpenseDbPersistence(engine=engine).save_expenses(expenses(GYM))
+
+    assert scalar(engine, "SELECT credit = 'NaN'::numeric FROM all_expenses") is True
+
+
+def test_find_missing_returns_the_rows_that_are_not_stored(engine):
+    db = ExpenseDbPersistence(engine=engine)
+    statement = expenses(GYM, PAYROLL, GYM)
+    assert len(db.find_missing(statement)) == 3
+
+    db.save_expenses(statement)
+    assert db.find_missing(statement).empty
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM all_expenses WHERE description IN ('Acme Payroll', 'Acme Gym (2)')"))
+    missing = db.find_missing(statement)
+
+    assert list(missing.index) == [1, 2]
+    # As stored: the repeat of a row in the same statement carries a suffix.
+    assert list(missing["Description"]) == ["Acme Payroll", "Acme Gym (2)"]
+
+
+def test_stored_descriptions_number_the_repeats_and_are_idempotent():
+    statement = expenses(GYM, PAYROLL, GYM, GYM)
+
+    once = ExpenseDbPersistence.with_stored_descriptions(statement)
+
+    assert list(once["Description"]) == ["Acme Gym", "Acme Payroll", "Acme Gym (2)", "Acme Gym (3)"]
+    assert ExpenseDbPersistence.with_stored_descriptions(once).equals(once)
+    assert list(statement["Description"]) == ["Acme Gym", "Acme Payroll", "Acme Gym", "Acme Gym"]
+
+
+def test_find_missing_matches_manual_rows_stored_with_null(engine):
+    db = ExpenseDbPersistence(engine=engine)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO all_expenses (date, bank, description, debit, credit) "
+            "VALUES ('2026-10-02 00:00:00', 'chase', 'Acme Gym', 30.00, NULL)"
+        ))
+
+    assert db.find_missing(expenses(GYM)).empty
 
 
 def test_schema_is_checked_once_per_process(engine):

@@ -23,6 +23,12 @@ const BANKS = [
 type BankKey = (typeof BANKS)[number]["key"];
 type MonthSet = Record<BankKey, Set<string>>;
 
+interface StatementCheck {
+  statement: string;
+  complete: boolean;
+  summary: string;
+}
+
 function emptyMonthSets(): MonthSet {
   return { citi: new Set(), wellsfargo: new Set(), chase: new Set(), banamex: new Set() };
 }
@@ -34,8 +40,10 @@ export default function ImportPage() {
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [running, setRunning] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   const [hasError, setHasError] = useState(false);
+  const busy = running || checking;
   const outputRef = useRef<HTMLPreElement>(null);
 
   // Load available statement files whenever year changes
@@ -144,7 +152,40 @@ export default function ImportPage() {
     }
   }
 
+  // Re-read every uploaded statement of the year and compare it with its printed totals
+  // and with the app; problems become Action Items on the dashboard.
+  async function handleCheck() {
+    setChecking(true);
+    setOutput("");
+    setHasError(false);
+    try {
+      const res = await fetch(`/api/reconciliation/${year}`, { method: "POST" });
+      if (!res.ok) {
+        setOutput(`HTTP error: ${res.status}`);
+        setHasError(true);
+        return;
+      }
+      const checks = (await res.json()) as StatementCheck[];
+      const incomplete = checks.filter((c) => !c.complete);
+      const lines = checks.map((c) => (c.complete ? c.summary : `WARNING: ${c.summary}`));
+      lines.push(
+        "",
+        incomplete.length === 0
+          ? `All ${checks.length} statement(s) add up to their printed totals and are fully stored.`
+          : `WARNING: ${incomplete.length} of ${checks.length} statement(s) need follow-up. See Action Items on the dashboard.`,
+      );
+      setOutput(lines.join("\n"));
+      if (checks.some((c) => c.summary.startsWith("ERROR:"))) setHasError(true);
+    } catch (err) {
+      setOutput(`Error: ${String(err)}`);
+      setHasError(true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
   const anySelected = BANKS.some((b) => selectedMonths[b.key].size > 0);
+  const hasWarning = !hasError && (output ?? "").includes("WARNING:");
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -157,7 +198,7 @@ export default function ImportPage() {
           type="text"
           value={year}
           onChange={(e) => setYear(e.target.value)}
-          disabled={running}
+          disabled={busy}
           className="border border-gray-300 rounded px-3 py-1.5 text-sm w-28 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-100"
         />
         {loadingFiles && (
@@ -183,7 +224,7 @@ export default function ImportPage() {
                   checked={allChecked}
                   ref={(el) => { if (el) el.indeterminate = someChecked; }}
                   onChange={(e) => toggleBank(key, e.target.checked)}
-                  disabled={running}
+                  disabled={busy}
                   className="w-4 h-4 accent-blue-600"
                 />
                 <label
@@ -203,7 +244,7 @@ export default function ImportPage() {
                     </span>
                     <button
                       onClick={() => selectAvailable(key)}
-                      disabled={running}
+                      disabled={busy}
                       className="text-xs text-blue-500 hover:text-blue-700 disabled:text-gray-300"
                     >
                       Select available
@@ -234,7 +275,7 @@ export default function ImportPage() {
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleMonth(key, month)}
-                          disabled={running}
+                          disabled={busy}
                           className="w-3 h-3 accent-blue-600 flex-shrink-0"
                         />
                         <span className="font-medium text-gray-700">{MONTH_LABELS[month]}</span>
@@ -259,7 +300,7 @@ export default function ImportPage() {
                             type="file"
                             accept=".pdf"
                             className="sr-only"
-                            disabled={running || isUploading}
+                            disabled={busy || isUploading}
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (file) handleUpload(key, month, file);
@@ -315,36 +356,54 @@ export default function ImportPage() {
         })}
       </div>
 
-      {/* Run button */}
-      <button
-        onClick={handleRun}
-        disabled={running || !anySelected || !year.trim()}
-        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2 rounded transition-colors"
-      >
-        {running && (
-          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
-        )}
-        {running ? "Running…" : "Run Pipeline"}
-      </button>
+      {/* Run and check buttons */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleRun}
+          disabled={busy || !anySelected || !year.trim()}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2 rounded transition-colors"
+        >
+          {running && (
+            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+          )}
+          {running ? "Running…" : "Run Pipeline"}
+        </button>
+        <button
+          onClick={handleCheck}
+          disabled={busy || !/^\d{4}$/.test(year)}
+          title="Compare every uploaded statement of the year with its printed totals and with the app"
+          className="border border-blue-600 text-blue-700 hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-400 disabled:cursor-not-allowed text-sm font-medium px-5 py-2 rounded transition-colors"
+        >
+          {checking ? "Checking…" : "Check statements"}
+        </button>
+      </div>
 
       {/* Streaming output */}
       {output !== null && (
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">Output</span>
-            {!running && (
+            {!busy && (
               <span
                 className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  hasError ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                  hasError
+                    ? "bg-red-100 text-red-700"
+                    : hasWarning
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-green-100 text-green-700"
                 }`}
               >
-                {hasError ? "Completed with errors" : "Completed"}
+                {hasError
+                  ? "Completed with errors"
+                  : hasWarning
+                    ? "Completed: needs follow-up (see Action Items)"
+                    : "Completed"}
               </span>
             )}
-            {running && <span className="text-xs text-gray-400 animate-pulse">live</span>}
+            {busy && <span className="text-xs text-gray-400 animate-pulse">live</span>}
           </div>
           <pre
             ref={outputRef}

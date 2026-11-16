@@ -8,6 +8,7 @@ from personal_expenses_app.infrastructure.banamex_file_loader import BanamexFile
 from personal_expenses_app.infrastructure.chase_file_loader import ChaseFileLoader
 from personal_expenses_app.infrastructure.citi_file_loader import CARDHOLDER_NAMES, CitiFileLoader
 from personal_expenses_app.infrastructure.statement_loader import COLUMNS
+from personal_expenses_app.infrastructure.statement_reconciliation import StatementTotals
 from personal_expenses_app.infrastructure.wellsfargo_file_loader import WellsfargoFileLoader
 
 
@@ -32,6 +33,12 @@ CHASE_KEY = "resources/chase/2026/chase-oct-2026.pdf"
 CHASE_PAGES = [
     "September 18, 2026 through October 19, 2026\n"
     "CHECKING SUMMARY\n"
+    "AMOUNT\n"
+    "Beginning Balance $1,000.00\n"
+    "Deposits and Additions 3,100.00\n"
+    "Electronic Withdrawals -1,245.60\n"
+    "Other Withdrawals -80.00\n"
+    "Ending Balance $2,774.40\n"
     "10/01 Listed Outside Any Section $9.99",
     "DEPOSITS AND ADDITIONS\n"
     "DATE DESCRIPTION AMOUNT\n"
@@ -62,6 +69,116 @@ def test_chase_reads_credits_and_debits_by_section():
         ("2026-10-08", "Acme Water Bill", 45.10, None),
         ("2026-10-12", "Cashier Check", 80.00, None),
     ]
+
+
+def test_chase_statement_adds_up_to_its_checking_summary(capsys):
+    loader = ChaseFileLoader()
+
+    _, reconciliation = loader.read_statement(CHASE_KEY, CHASE_PAGES)
+    loader.parse_statement(CHASE_KEY, CHASE_PAGES)
+
+    assert reconciliation.matches is True
+    assert reconciliation.printed == StatementTotals(debits=1325.60, credits=3100.00)
+    assert capsys.readouterr().out == (
+        "chase-oct-2026.pdf: 5 transaction(s) add up to the statement's totals "
+        "(debits 1,325.60, credits 3,100.00).\n"
+    )
+
+
+def test_chase_reads_fees():
+    pages = [
+        "December 18, 2025 through January 19, 2026\n"
+        "CHECKING SUMMARY\n"
+        "Beginning Balance $500.00\n"
+        "Electronic Withdrawals -30.00\n"
+        "Fees -50.00\n"
+        "Ending Balance $420.00",
+        "ELECTRONIC WITHDRAWALS\n"
+        "01/05 Acme Gym $30.00\n"
+        "Total Electronic Withdrawals $30.00\n"
+        "FEES\n"
+        "DATE DESCRIPTION AMOUNT\n"
+        "12/29 Online Domestic Wire Fee $25.00\n"
+        "01/05 Online Domestic Wire Fee 25.00\n"
+        "Total Fees $50.00\n"
+        "01/06 After The Fees Section $1.00",
+    ]
+
+    df, reconciliation = ChaseFileLoader().read_statement("resources/chase/2026/chase-jan-2026.pdf", pages)
+
+    assert rows(df) == [
+        ("2025-12-29", "Online Domestic Wire Fee", 25.00, None),
+        ("2026-01-05", "Acme Gym", 30.00, None),
+        ("2026-01-05", "Online Domestic Wire Fee", 25.00, None),
+    ]
+    assert reconciliation.matches is True
+
+
+def test_chase_reports_a_section_it_did_not_read():
+    pages = [
+        "September 18, 2026 through October 19, 2026\n"
+        "CHECKING SUMMARY\n"
+        "Beginning Balance $500.00\n"
+        "Checks Paid -200.00\n"
+        "Electronic Withdrawals -30.00\n"
+        "Ending Balance $270.00",
+        "CHECKS PAID\n"
+        "1042 10/03 $200.00\n"
+        "Total Checks Paid $200.00\n"
+        "ELECTRONIC WITHDRAWALS\n"
+        "10/02 Acme Gym $30.00",
+    ]
+
+    _, reconciliation = ChaseFileLoader().read_statement(CHASE_KEY, pages)
+
+    assert reconciliation.matches is False
+    assert reconciliation.describe() == (
+        "WARNING: chase-oct-2026.pdf does not add up to the statement's totals: "
+        "debits read 30.00, statement 230.00 (200.00 missing). Transactions are missing or misread."
+    )
+
+
+def test_chase_savings_section_is_left_out_and_said_so():
+    pages = CHASE_PAGES + [
+        "SAVINGS SUMMARY\n"
+        "Beginning Balance $100.00\n"
+        "Deposits and Additions 25.00\n"
+        "Ending Balance $125.00\n"
+        "TRANSACTION DETAIL\n"
+        "10/06 Transfer From Chk Xxxxx1234 25.00 125.00"
+    ]
+
+    df, reconciliation = ChaseFileLoader().read_statement(CHASE_KEY, pages)
+
+    assert len(df) == 5
+    assert reconciliation.matches is True
+    assert reconciliation.describe().endswith("(Its Chase Savings section is not imported.)")
+
+
+def test_statement_that_says_nothing_happened_may_be_empty():
+    pages = [
+        "September 18, 2026 through October 19, 2026\n"
+        "CHECKING SUMMARY\n"
+        "Beginning Balance $500.00\n"
+        "Ending Balance $500.00"
+    ]
+
+    df, reconciliation = ChaseFileLoader().read_statement(CHASE_KEY, pages)
+
+    assert df.empty
+    assert reconciliation.matches is True
+
+
+def test_statement_without_printed_totals_cannot_be_confirmed():
+    pages = ["September 18, 2026 through October 19, 2026", "ELECTRONIC WITHDRAWALS\n10/02 Acme Gym $30.00"]
+
+    _, reconciliation = ChaseFileLoader().read_statement(CHASE_KEY, pages)
+
+    assert reconciliation.matches is None
+    assert reconciliation.describe() == (
+        "WARNING: chase-oct-2026.pdf: read 1 transaction(s) (debits 30.00, credits 0.00) "
+        "but found no totals on the statement to check them against."
+    )
 
 
 def test_chase_recovers_transaction_garbled_into_end_marker():
@@ -116,7 +233,13 @@ def test_statement_without_transactions_is_an_error():
 
 WELLS_PAGES = [
     "October 26, 2026 Page 1 of 5\nWells Fargo Everyday Checking\n10/1 Not In The Table 1.00",
+    "Statement period activity summary\n"
+    "Beginning balance on 9/25 $3,455.42\n"
+    "Deposits/Additions 500.03 Arizona account terms and conditions apply\n"
+    "Withdrawals/Subtractions - 1,048.44 For Direct Deposit use\n"
+    "Ending balance on 10/26 $2,907.01\n"
     "Transaction history\n"
+    "Check Deposits/ Withdrawals/ Ending daily\n"
     "Date Number Description Additions Subtractions balance\n"
     "10/2 Acme Mortgage 261002 P12739652 798.44 3,157.01\n"
     "10/5 Recurring Transfer From Acme Bank Ref #Op0Abc 500.00\n"
@@ -142,6 +265,28 @@ def test_wellsfargo_reads_transaction_history():
     ]
 
 
+def test_wellsfargo_statement_adds_up_to_its_activity_summary():
+    key = "resources/wellsfargo/2026/wellsfargo-oct-2026.pdf"
+
+    _, reconciliation = WellsfargoFileLoader().read_statement(key, WELLS_PAGES)
+
+    assert reconciliation.printed == StatementTotals(debits=1048.44, credits=500.03)
+    assert reconciliation.matches is True
+
+
+def test_wellsfargo_reports_a_deposit_read_as_a_withdrawal():
+    key = "resources/wellsfargo/2026/wellsfargo-oct-2026.pdf"
+    # Nothing in this description says it is a deposit, so it is read as a withdrawal.
+    pages = [WELLS_PAGES[0], WELLS_PAGES[1].replace("Interest Payment", "Acme Rebate")]
+
+    _, reconciliation = WellsfargoFileLoader().read_statement(key, pages)
+
+    assert reconciliation.differences == [
+        "debits read 1,048.47, statement 1,048.44 (0.03 too much)",
+        "credits read 500.00, statement 500.03 (0.03 missing)",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Banamex
 # ---------------------------------------------------------------------------
@@ -149,6 +294,11 @@ def test_wellsfargo_reads_transaction_history():
 BANAMEX_KEY = "resources/banamex/2026/banamex-mar-2026.pdf"
 BANAMEX_PAGES = [
     "ESTADO DE CUENTA\n"
+    "Resumen del 7 de febrero al 6 de marzo del 2026\n"
+    "Saldo anterior En pesos M.N. 10,000.00\n"
+    "(+) 2 Depósitos 2,035.00\n"
+    "(-) 1 Retiros/Otros cargos 370.00\n"
+    "Saldo al Corte 11,665.00\n"
     "Detalle de Operaciones\n"
     "FECHA CONCEPTO RETIROS DEPOSITOS SALDO\n"
     "01 MAR SALDO ANTERIOR 10,000.00\n"
@@ -180,6 +330,25 @@ def test_banamex_reads_multi_line_transactions_in_dollars():
     ]
 
 
+def test_banamex_statement_adds_up_in_pesos():
+    _, reconciliation = BanamexFileLoader().read_statement(BANAMEX_KEY, BANAMEX_PAGES)
+
+    assert reconciliation.printed == StatementTotals(370.00, 2035.00, debit_count=1, credit_count=2)
+    assert reconciliation.read == reconciliation.printed
+    assert reconciliation.describe() == (
+        "banamex-mar-2026.pdf: 3 transaction(s) add up to the statement's totals "
+        "(debits 370.00, credits 2,035.00 MXN)."
+    )
+
+
+def test_banamex_reports_a_miscounted_statement():
+    pages = [BANAMEX_PAGES[0].replace("(-) 1 Retiros", "(-) 2 Retiros"), BANAMEX_PAGES[1]]
+
+    _, reconciliation = BanamexFileLoader().read_statement(BANAMEX_KEY, pages)
+
+    assert reconciliation.differences == ["1 debits read, statement lists 2"]
+
+
 def test_banamex_reads_amounts_whose_cents_were_split():
     pages = [
         "FECHA CONCEPTO RETIROS DEPOSITOS SALDO\n"
@@ -205,7 +374,16 @@ def test_banamex_statement_without_movements_is_empty():
 
 CITI_KEY = "resources/citi/2026/citi-oct-2026.pdf"
 CITI_PAGES = [
-    "OCTOBER STATEMENT\nBilling Period: 09/09/26-10/08/26\nNew balance as of 10/08/26",
+    "OCTOBER STATEMENT\nBilling Period: 09/09/26-10/08/26\nNew balance as of 10/08/26\n"
+    "Account Summary\n"
+    "Previous balance $1,208.25\n"
+    "Payments -$1,200.00\n"
+    "Credits -$8.25\n"
+    "Purchases +$597.70\n"
+    "Cash advances +$0.00\n"
+    "Fees +$0.00\n"
+    # The layout often puts unrelated text beside the summary.
+    "Interest +$0.00 New balance $597.70",
     "Payments, Credits and Adjustments\n"
     "Sale Post\n"
     "Date Date Description Amount\n"
@@ -230,8 +408,8 @@ CITI_PAGES = [
     "SOMX\n"
     "925.00 MEXICAN PESO $50.00\n"
     "10/05 10/05 GAS STOP 1499 TUCSON AZ $32.10 Total Earned: $61.68\n"
-    "Interest Charged\n"
-    "10/06 10/06 INTEREST CHARGE ON PURCHASES $5.00",
+    "CARDHOLDER SUMMARY\n"
+    "10/06 10/06 AFTER THE TRANSACTIONS $5.00",
 ]
 
 
@@ -255,6 +433,42 @@ def test_citi_reads_single_and_multi_line_transactions():
         # Rewards text appended after the amount is ignored.
         ("2026-10-05", "GAS STOP 1499 TUCSON AZ", 32.10, None),
     ]
+
+
+def test_citi_statement_adds_up_to_its_account_summary():
+    _, reconciliation = CitiFileLoader().read_statement(CITI_KEY, CITI_PAGES)
+
+    assert reconciliation.printed == StatementTotals(debits=597.70, credits=1208.25)
+    assert reconciliation.matches is True
+
+
+def test_citi_reads_fees_and_interest_charges():
+    pages = [
+        "Billing Period: 09/09/26-10/08/26\n"
+        "Payments -$0.00\nCredits -$0.00\nPurchases +$11.50\n"
+        "Cash advances +$0.00\nFees +$29.00\nInterest +$4.56",
+        "Standard Purchases\n"
+        "09/10 09/11 CORNER DINER #12 TUCSON AZ $11.50\n"
+        "Fees Charged\n"
+        "Date Description Amount\n"
+        "10/08 LATE FEE $29.00\n"
+        "TOTAL FEES FOR THIS PERIOD $29.00\n"
+        "Interest Charged\n"
+        "Date Description Amount\n"
+        "10/08 INTEREST CHARGED TO STANDARD PURCH $4.56\n"
+        "TOTAL INTEREST FOR THIS PERIOD $4.56\n"
+        "2026 totals year-to-date\n"
+        "10/08 NOT A CHARGE $1.00",
+    ]
+
+    df, reconciliation = CitiFileLoader().read_statement(CITI_KEY, pages)
+
+    assert rows(df) == [
+        ("2026-09-10", "CORNER DINER #12 TUCSON AZ", 11.50, None),
+        ("2026-10-08", "LATE FEE", 29.00, None),
+        ("2026-10-08", "INTEREST CHARGED TO STANDARD PURCH", 4.56, None),
+    ]
+    assert reconciliation.matches is True
 
 
 def test_citi_yearly_totals_end_the_transactions():

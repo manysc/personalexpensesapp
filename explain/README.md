@@ -10,7 +10,7 @@ Imports monthly statements, categorizes transactions, and tracks expenses, recei
 
 **Backend: `src/personal_expenses_app/`**
 - `api/app.py` (~1.9k lines) → the whole FastAPI app: ORM models, `_run_migrations`, `lifespan`, all routes, and the pipeline thread.
-- `infrastructure/{citi,wellsfargo,chase,banamex}_file_loader.py` → pdfplumber and regex statement parsers. Each returns a DataFrame with `Date, Bank, Description, Debit, Credit`. They share `statement_loader.py` (base class: S3 fetch, statement period, DataFrame), `pdf_text.py` (PDF → page text) and `statement_import.py` (loader registry and `StatementBatch`, which the pipeline uses to extract text in worker processes).
+- `infrastructure/{citi,wellsfargo,chase,banamex}_file_loader.py` → pdfplumber and regex statement parsers. Each returns a DataFrame with `Date, Bank, Description, Debit, Credit`. They share `statement_loader.py` (base class: S3 fetch, statement period, DataFrame), `statement_reconciliation.py` (`StatementTotals`, `Reconciliation`: read vs printed totals), `pdf_text.py` (PDF → page text) and `statement_import.py` (loader registry and `StatementBatch`, which the pipeline uses to extract text in worker processes).
 - `infrastructure/expense_db_persistence.py` → `ExpenseDbPersistence` upsert. It declares `all_expenses` a second time, partially.
 - `infrastructure/s3_storage.py` → the only module that talks to boto3/SeaweedFS: `get_object_bytes`, `put_object_bytes`, `object_exists`, `delete_object`, `list_keys`, `ensure_bucket_exists`.
 - `infrastructure/citi_csv_file_loader.py`, `infrastructure/file_persistence.py`, `core/ml_based_expense_categorizer.py`, `core/corrections.py` → the legacy scikit-learn path, used by `main.py` with `resources/corrections.csv`.
@@ -41,11 +41,12 @@ Imports monthly statements, categorizes transactions, and tracks expenses, recei
 |---|---|
 | Expenses | `GET`, `POST /expenses` (409 on a duplicate)<br>`GET`, `PATCH`, `DELETE /expenses/{expense_id}`<br>`PATCH /expenses/{expense_id}/category`<br>`POST /expenses/bulk-update`<br>`GET /expenses/comments`, `/expenses/summary`, `/expenses/property-summary` |
 | Receipts | `POST`, `GET` (`?inline=`), `DELETE /expenses/{expense_id}/receipt` |
-| Action items | `GET /expenses/action-items` (`?include_resolved=`)<br>`POST /expenses/action-items/{item_id}/resolve` |
+| Action items | `GET /expenses/action-items` (`?include_resolved=`)<br>`POST /expenses/action-items/{item_id}/resolve`<br>`POST /expenses/action-items/{item_id}/load` (statement "not in app" items) |
 | Categories | `GET`, `POST /categories`<br>`PUT`, `DELETE /categories/{category_id}`<br>`POST /categories/seed`<br>`GET /banks` |
 | Rentals | `GET`, `POST /rental-properties`<br>`PUT`, `DELETE /rental-properties/{property_id}`<br>`POST /rental-properties/{property_id}/sync-expenses` |
 | Vehicles | `GET`, `POST /vehicles`<br>`GET`, `PUT`, `DELETE /vehicles/{vehicle_id}`<br>`GET`, `POST /vehicles/{vehicle_id}/services`<br>`PUT`, `DELETE /vehicles/{vehicle_id}/services/{service_id}` |
 | Import | `POST /pipeline/run`. Body `PipelineRunRequest`: `year`, `citi_months`, `wellsfargo_months`, `chase_months`, `banamex_months`, with months as `jan`…`dec`. Streams `text/plain`. |
+| Reconciliation | `GET /reconciliation/{year}?bank=&month=`. Read-only. `POST` runs the same check and files Action Items. Per uploaded statement: totals read vs totals printed on the statement (`adds_up`), transactions not in the database (`missing`), and `complete`. |
 | Statements | `GET /statements/{bank}/{year}`<br>`POST`, `GET /statements/{bank}/{year}/{month}`<br>`bank` must be in `_VALID_BANKS` = `citi`, `wellsfargo`, `chase`, `banamex`. |
 
 **Frontend proxies:** each backend path has its own route file, with one exception: `api/expenses/[id]/comments` and `api/expenses/[id]/property` both forward to `PATCH /expenses/{id}`.

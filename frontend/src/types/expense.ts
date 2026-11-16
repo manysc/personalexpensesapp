@@ -102,7 +102,12 @@ export interface VehicleServiceRequest {
 export interface ActionItem {
   id: number;
   action_key: string;
-  type: "rent_unpaid" | "utility_changed";
+  type:
+    | "rent_unpaid"
+    | "utility_changed"
+    | "statement_unverified"
+    | "statement_not_stored"
+    | "statement_not_imported";
   property_id: number | null;
   month: string;
   message: string;

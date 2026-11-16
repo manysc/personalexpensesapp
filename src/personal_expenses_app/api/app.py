@@ -30,6 +30,16 @@ from personal_expenses_app.core.tenant_matching import tenant_match_tokens
 from personal_expenses_app.infrastructure import s3_storage
 from personal_expenses_app.infrastructure.expense_db_persistence import ExpenseDbPersistence
 from personal_expenses_app.infrastructure.statement_import import LOADERS, StatementBatch, statement_key
+from personal_expenses_app.infrastructure.statement_period import period_from_filename
+from personal_expenses_app.infrastructure.statement_reconciliation import (
+    FOLLOW_UP_TYPES,
+    STATEMENT_NOT_IMPORTED,
+    STATEMENT_NOT_STORED,
+    FollowUp,
+    statement_follow_ups,
+    transaction_fingerprint,
+    unreadable_statement_follow_up,
+)
 from personal_expenses_app.interface.user_interaction import UserInteraction
 
 _project_root = Path(__file__).parent.parent.parent.parent
@@ -958,6 +968,109 @@ def _detect_action_items(session: Session) -> None:
     session.commit()
 
 
+def _record_statement_follow_ups(follow_ups_by_statement: dict[str, list[FollowUp]]) -> str:
+    """Make the statements' open action items match their latest check; return a one-line verdict.
+
+    A problem found for the first time opens an item. An open item whose problem is gone
+    is deleted. A resolved item is left alone: resolving one is how a person says "seen,
+    nothing to do" (e.g. a row deleted on purpose), so the same problem does not reopen
+    it; a different problem with the statement opens a new item.
+    """
+    with Session(_get_engine()) as session:
+        for statement, follow_ups in follow_ups_by_statement.items():
+            current = {f"{f.type}:{statement}:{f.fingerprint}": f for f in follow_ups}
+            for type_ in FOLLOW_UP_TYPES:
+                prefix = f"{type_}:{statement}:"
+                session.execute(
+                    text(
+                        "DELETE FROM action_items WHERE status = 'open' "
+                        "AND left(action_key, :length) = :prefix AND NOT (action_key = ANY(:current))"
+                    ),
+                    {"length": len(prefix), "prefix": prefix, "current": list(current)},
+                )
+            filed = period_from_filename(statement)
+            month = f"{filed[0]}-{filed[1]:02d}" if filed else "0000-00"
+            for action_key, follow_up in current.items():
+                _upsert_action_item(session, action_key, follow_up.type, None, month, follow_up.message)
+        session.commit()
+
+    needing = [s.rsplit("/", 1)[-1] for s, follow_ups in follow_ups_by_statement.items() if follow_ups]
+    if not needing:
+        return (
+            f"All {len(follow_ups_by_statement)} statement(s) add up to their printed totals "
+            f"and are fully stored."
+        )
+    return (
+        f"WARNING: {len(needing)} of {len(follow_ups_by_statement)} statement(s) need follow-up: "
+        f"{', '.join(needing)}. See Action Items on the dashboard."
+    )
+
+
+def _rows_where(df: pd.DataFrame, flags: list[bool]) -> pd.DataFrame:
+    return df[pd.Series(flags, index=df.index, dtype=bool)]
+
+
+def _split_kept_out(statement: str, transactions: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a statement's transactions into those to store and those a person keeps out.
+
+    Keeping one out is resolving its "not in app" action item ("Keep out" in the UI): it
+    was removed from the app on purpose, so imports must not bring it back.
+    """
+    prefix = f"{STATEMENT_NOT_STORED}:{statement}:"
+    with Session(_get_engine()) as session:
+        keys = session.execute(
+            text(
+                "SELECT action_key FROM action_items "
+                "WHERE status = 'resolved' AND left(action_key, :length) = :prefix"
+            ),
+            {"length": len(prefix), "prefix": prefix},
+        ).scalars()
+        kept_out = {key[len(prefix):] for key in keys}
+    if not kept_out:
+        return transactions, transactions.iloc[0:0]
+
+    transactions = ExpenseDbPersistence.with_stored_descriptions(transactions)
+    is_kept_out = [transaction_fingerprint(row) in kept_out for row in transactions.itertuples()]
+    return (
+        _rows_where(transactions, [not flag for flag in is_kept_out]),
+        _rows_where(transactions, is_kept_out),
+    )
+
+
+class LoadMissingResponse(BaseModel):
+    loaded: int
+
+
+@app.post("/expenses/action-items/{item_id}/load", response_model=LoadMissingResponse)
+def load_missing_transactions(item_id: int):
+    """Load what an open "not in app" action item is about: one transaction, or all for the statement."""
+    with Session(_get_engine()) as session:
+        item = session.get(_ActionItem, item_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"Action item {item_id} not found.")
+        item_type, action_key, status = item.type, item.action_key, item.status
+    if item_type not in (STATEMENT_NOT_STORED, STATEMENT_NOT_IMPORTED) or status != "open":
+        raise HTTPException(status_code=400, detail="Only open 'not in app' action items can be loaded.")
+
+    statement, fingerprint = action_key[len(item_type) + 1:].rsplit(":", 1)
+    bank = statement.split("/")[1]
+    db = ExpenseDbPersistence(engine=_get_engine())
+    with StatementBatch([statement]) as batch:
+        transactions, reconciliation = batch.read(bank, statement)
+    to_store, _ = _split_kept_out(statement, transactions)
+
+    missing = db.find_missing(to_store)
+    if item_type == STATEMENT_NOT_STORED:
+        missing = _rows_where(missing, [transaction_fingerprint(row) == fingerprint for row in missing.itertuples()])
+    if not missing.empty:
+        categorizer = RuleBasedExpenseCategorizer(_load_category_keywords())
+        db.save_expenses(categorizer.categorize_expenses(missing.copy()))
+        _link_properties_by_tenant()
+
+    _record_statement_follow_ups({statement: statement_follow_ups(reconciliation, db.find_missing(to_store))})
+    return LoadMissingResponse(loaded=len(missing))
+
+
 @app.get("/expenses/action-items", response_model=list[ActionItemResponse])
 def list_action_items(
     include_resolved: bool = Query(default=False, description="Include already-resolved items"),
@@ -1762,6 +1875,8 @@ def run_pipeline(body: PipelineRunRequest):
         }
         statement_keys = [key for statements in statements_by_month.values() for _, key in statements]
         all_labeled: list = []
+        read_statements: list = []  # (reconciliation, transactions), checked once all are saved.
+        follow_ups: dict[str, list[FollowUp]] = {}
 
         started = time.perf_counter()
         with StatementBatch(statement_keys) as batch:
@@ -1769,7 +1884,24 @@ def run_pipeline(body: PipelineRunRequest):
                 if not statements:
                     continue
                 print(f"\nProcessing {month} {year}...")
-                dfs = [df for bank, key in statements if not (df := batch.load(bank, key)).empty]
+                dfs = []
+                for bank, key in statements:
+                    try:
+                        df, reconciliation = batch.read(bank, key)
+                    except ValueError as exc:  # Not understood; the other statements still load.
+                        print(f"ERROR: {exc}")
+                        follow_ups[key] = [unreadable_statement_follow_up(key, exc)]
+                        continue
+                    print(reconciliation.describe())
+                    df, kept_out = _split_kept_out(key, df)
+                    if not kept_out.empty:
+                        print(
+                            f"Left out {len(kept_out)} transaction(s) of {key.rsplit('/', 1)[-1]} "
+                            f"that were kept out on purpose (resolved in Action Items)."
+                        )
+                    read_statements.append((reconciliation, df))
+                    if not df.empty:
+                        dfs.append(df)
                 if not dfs:
                     print(f"No data loaded for {month} {year}")
                     continue
@@ -1784,6 +1916,9 @@ def run_pipeline(body: PipelineRunRequest):
             workers = batch.worker_processes
             reading = f", reading PDFs in {workers} worker processes" if workers else ""
             print(f"\nImported {len(statement_keys)} statement(s) in {elapsed:.1f}s{reading}.")
+            for reconciliation, df in read_statements:
+                follow_ups[reconciliation.statement] = statement_follow_ups(reconciliation, db.find_missing(df))
+            print(_record_statement_follow_ups({key: follow_ups[key] for key in statement_keys if key in follow_ups}))
 
         if all_labeled:
             linked = _link_properties_by_tenant()
@@ -1858,6 +1993,131 @@ async def upload_statement(bank: str, year: str, month: str, file: UploadFile = 
     content = await file.read()
     s3_storage.put_object_bytes(f"resources/{bank}/{year}/{bank}-{month}-{year}.pdf", content)
     return {"uploaded": True}
+
+
+class MissingExpense(BaseModel):
+    date: str
+    description: str
+    debit: Optional[float] = None
+    credit: Optional[float] = None
+
+
+class StatementReconciliationResponse(BaseModel):
+    """One statement compared with its own printed totals and with the stored expenses."""
+    bank: str
+    month: str
+    statement: str
+    currency: str = "USD"  # Of the statement's totals; stored amounts are always US dollars.
+    transactions: int = 0
+    read_debits: float = 0
+    read_credits: float = 0
+    statement_debits: Optional[float] = None
+    statement_credits: Optional[float] = None
+    adds_up: Optional[bool] = None  # None: no totals were found on the statement.
+    missing: list[MissingExpense] = []  # Read from the statement but not stored.
+    kept_out: list[MissingExpense] = []  # Not stored on purpose ("Keep out" in Action Items).
+    complete: bool = False  # The statement adds up and every transaction is stored.
+    summary: str = ""
+
+
+def _missing_expenses(transactions: pd.DataFrame) -> list[MissingExpense]:
+    return [
+        MissingExpense(
+            date=str(row.Date),
+            description=row.Description,
+            debit=None if pd.isna(row.Debit) else row.Debit,
+            credit=None if pd.isna(row.Credit) else row.Credit,
+        )
+        for row in transactions.itertuples()
+    ]
+
+
+def _reconcile_statement(
+    batch: StatementBatch, db: ExpenseDbPersistence, bank: str, month: str, key: str
+) -> tuple[StatementReconciliationResponse, list[FollowUp]]:
+    result = StatementReconciliationResponse(bank=bank, month=month, statement=key)
+    try:
+        df, reconciliation = batch.read(bank, key)
+    except ValueError as exc:
+        result.summary = f"ERROR: {exc}"
+        return result, [unreadable_statement_follow_up(key, exc)]
+
+    to_store, kept_out = _split_kept_out(key, df)
+    not_stored = db.find_missing(to_store)
+    result.currency = reconciliation.currency
+    result.transactions = len(df)
+    result.read_debits = reconciliation.read.debits
+    result.read_credits = reconciliation.read.credits
+    if reconciliation.printed is not None:
+        result.statement_debits = reconciliation.printed.debits
+        result.statement_credits = reconciliation.printed.credits
+    result.adds_up = reconciliation.matches
+    result.missing = _missing_expenses(not_stored)
+    result.kept_out = _missing_expenses(kept_out)
+    result.complete = bool(reconciliation.matches) and not result.missing
+    stored = (
+        f"all {len(to_store)} are stored" if not result.missing
+        else f"{len(result.missing)} of {len(to_store)} are NOT stored (see Action Items)"
+    )
+    if result.kept_out:
+        stored += f", {len(result.kept_out)} kept out on purpose"
+    result.summary = f"{reconciliation.describe()} In the database: {stored}."
+    return result, statement_follow_ups(reconciliation, not_stored)
+
+
+@app.get("/reconciliation/{year}", response_model=list[StatementReconciliationResponse])
+def reconcile_statements(
+    year: str,
+    bank: Optional[str] = Query(default=None, description="Only this bank"),
+    month: Optional[str] = Query(default=None, description="Only this month (jan..dec)"),
+):
+    """Check the uploaded statements of a year against their printed totals and the stored expenses.
+
+    Read-only: each statement is parsed again, compared with the totals it prints, and
+    its transactions are looked up in the database.
+    """
+    return [result for result, _ in _check_statements(year, bank, month)]
+
+
+@app.post("/reconciliation/{year}", response_model=list[StatementReconciliationResponse])
+def reconcile_statements_and_notify(
+    year: str,
+    bank: Optional[str] = Query(default=None, description="Only this bank"),
+    month: Optional[str] = Query(default=None, description="Only this month (jan..dec)"),
+):
+    """Like GET, and also update the dashboard's action items with what needs follow-up.
+
+    Transactions kept out on purpose are not reported as missing again.
+    """
+    checked = _check_statements(year, bank, month)
+    _record_statement_follow_ups({result.statement: follow_ups for result, follow_ups in checked})
+    return [result for result, _ in checked]
+
+
+def _check_statements(
+    year: str, bank: Optional[str], month: Optional[str]
+) -> list[tuple[StatementReconciliationResponse, list[FollowUp]]]:
+    """Re-read the year's uploaded statements (optionally one bank and/or month) and check each."""
+    if bank is not None and bank not in _VALID_BANKS:
+        raise HTTPException(status_code=400, detail=f"Unknown bank: {bank}")
+    if month is not None and month not in _VALID_MONTHS_SET:
+        raise HTTPException(status_code=400, detail=f"Unknown month: {month}")
+    if not re.match(r"^\d{4}$", year):
+        raise HTTPException(status_code=400, detail=f"Invalid year: {year}")
+
+    statements = []
+    for statement_bank in LOADERS:
+        if bank not in (None, statement_bank):
+            continue
+        uploaded = set(s3_storage.list_keys(prefix=f"resources/{statement_bank}/{year}/"))
+        for statement_month in _PIPELINE_MONTH_ORDER:
+            key = statement_key(statement_bank, year, statement_month)
+            if key in uploaded and month in (None, statement_month):
+                statements.append((statement_bank, statement_month, key))
+
+    db = ExpenseDbPersistence(engine=_get_engine())
+    with StatementBatch([key for _, _, key in statements]) as batch:
+        return [_reconcile_statement(batch, db, *statement) for statement in statements]
 
 
 @app.get("/statements/{bank}/{year}/{month}")

@@ -146,7 +146,7 @@ How it runs:
 
 Tools:
 
-- **Read:** `list_expenses`, `get_expense`, `get_spending_summary` (totals by month/category/property), `get_property_summary`, `list_commented_expenses`, `list_action_items`, `list_categories`, `list_banks`, `list_rental_properties`, `list_vehicles`, `list_vehicle_services`, `list_statement_months`
+- **Read:** `list_expenses`, `get_expense`, `get_spending_summary` (totals by month/category/property), `get_property_summary`, `list_commented_expenses`, `list_action_items`, `reconcile_statements` (statements vs their printed totals vs the database), `list_categories`, `list_banks`, `list_rental_properties`, `list_vehicles`, `list_vehicle_services`, `list_statement_months`
 - **Write:** `create_expense`, `update_expense`, `set_expense_category`, `bulk_update_expenses`, `attach_receipt`, `resolve_action_item`, `create_category`, `update_category`, `create_rental_property`, `update_rental_property`, `sync_property_expenses`, `create_vehicle`, `update_vehicle`, `add_vehicle_service`, `update_vehicle_service`, `upload_statement`, `run_import_pipeline`
 - **Delete** (marked destructive): `delete_expense`, `delete_receipt`, `delete_category`, `delete_rental_property`, `delete_vehicle`, `delete_vehicle_service`
 
@@ -217,7 +217,8 @@ Interactive docs with request and response details: http://localhost:8000/docs
 | GET | `/expenses/summary` | Net totals by month, category and rental property |
 | GET | `/expenses/property-summary` | Net totals by month and rental property: `{ month, property, total }` |
 | GET | `/expenses/action-items` | Open action items: unpaid rent and large utility bill changes. Add `?include_resolved=true` for all |
-| POST | `/expenses/action-items/{item_id}/resolve` | Mark an action item resolved |
+| POST | `/expenses/action-items/{item_id}/resolve` | Mark an action item resolved. For a "not in app" transaction this keeps it out of future imports |
+| POST | `/expenses/action-items/{item_id}/load` | Load the statement transaction(s) a "not in app" action item is about |
 | GET | `/banks` | Distinct bank names |
 
 ### Receipts
@@ -264,4 +265,6 @@ Interactive docs with request and response details: http://localhost:8000/docs
 | GET | `/statements/{bank}/{year}` | Months that have a statement PDF for that bank and year |
 | POST | `/statements/{bank}/{year}/{month}` | Upload a statement PDF |
 | GET | `/statements/{bank}/{year}/{month}` | Download a statement PDF |
-| POST | `/pipeline/run` | Import the selected statements. Streams progress as plain text |
+| POST | `/pipeline/run` | Import the selected statements. Streams progress as plain text, including whether each statement adds up to its printed totals |
+| GET | `/reconciliation/{year}` | Check the uploaded statements against their printed totals and the stored expenses (optional `bank`, `month`). Read-only |
+| POST | `/reconciliation/{year}` | Same check, and file what needs follow-up as Action Items (the Import page's "Check statements" button) |

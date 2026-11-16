@@ -23,6 +23,16 @@ printed beside the table:
 
 The parser therefore walks the lines keeping a "pending" description: text that still
 needs an amount (and sometimes a date) from a line further down.
+
+The "Account Summary" on the first page gives the totals the transactions are checked
+against::
+
+    Payments -$5,644.82
+    Credits -$602.22
+    Purchases +$4,621.54
+    Cash advances +$0.00
+    Fees +$0.00
+    Interest +$0.00
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ from personal_expenses_app.infrastructure.statement_loader import (
     parse_amount,
 )
 from personal_expenses_app.infrastructure.statement_period import StatementPeriod
+from personal_expenses_app.infrastructure.statement_reconciliation import StatementTotals
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +106,21 @@ _SECTION_END_PREFIXES = (
 )
 # "2026 totals year-to-date": the fees and interest summary that follows the transactions.
 _YEARLY_TOTALS_HEADER = re.compile(r"^\d{4}\s+totals\s+year-to-date", re.IGNORECASE)
+# "Fees Charged" and "Interest Charged" are short tables of dated lines, each closed by a
+# "TOTAL ... FOR THIS PERIOD" line.
+_CHARGES_SECTION_HEADERS = ("Fees Charged", "Interest Charged")
+_CHARGES_COLUMN_HEADER = "Description"
+
+# Account Summary lines. Their signs tell them apart from the same words elsewhere, and
+# the layout often puts other text on the same line.
+_SUMMARY_DEBITS = tuple(
+    re.compile(rf"{label}\s+\+\$([\d,]+\.\d{{2}})")
+    for label in ("Purchases", "Cash advances", "Fees", "Interest")
+)
+_SUMMARY_CREDITS = tuple(
+    re.compile(rf"{label}\s+-\$([\d,]+\.\d{{2}})") for label in ("Payments", "Credits")
+)
+
 _NOISE_MARKERS = (
     "Sale Post",
     "Date Date Description Amount",
@@ -200,6 +226,7 @@ class _StatementParser:
         # A description (sometimes with its date in front) still waiting for its amount.
         self._pending: Optional[str] = None
         self._skip_next_line = False
+        self._in_charges_section = False
 
     def parse(self, page_texts: Sequence[str]) -> list[Transaction]:
         for text in page_texts:
@@ -214,6 +241,8 @@ class _StatementParser:
             self._skip_next_line = False
             return
         if _LODGING_FOLIO_METADATA.match(stripped):
+            return
+        if self._in_charges_section and self._read_charge(stripped):
             return
         if (
             self._read_cardholder_header(index, line)
@@ -274,9 +303,21 @@ class _StatementParser:
             self._in_transaction_section = False
             self._in_payments_section = False
             self._pending = None
+            self._in_charges_section = stripped.startswith(_CHARGES_SECTION_HEADERS)
         else:
             return False
         return True
+
+    def _read_charge(self, stripped: str) -> bool:
+        """Read a line of the fees or interest table; any other line ends the table."""
+        parsed = _parse_dated_line(stripped)
+        if parsed and parsed.description and parsed.amount is not None:
+            self._add(parsed.date, parsed.description, parsed.amount)
+            return True
+        if _CHARGES_COLUMN_HEADER in stripped:
+            return True
+        self._in_charges_section = False
+        return False
 
     def _is_noise(self, index: int, line: str, stripped: str) -> bool:
         """True for blank lines, column headers and rewards-summary lines."""
@@ -418,3 +459,14 @@ class CitiFileLoader(StatementLoader):
 
     def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
         return _StatementParser().parse(page_texts)
+
+    def _printed_totals(self, page_texts: Sequence[str]) -> Optional[StatementTotals]:
+        text = "\n".join(page_texts)
+        debits = [pattern.search(text) for pattern in _SUMMARY_DEBITS]
+        credits = [pattern.search(text) for pattern in _SUMMARY_CREDITS]
+        if not all(debits) or not all(credits):
+            return None
+        return StatementTotals(
+            debits=round(sum(parse_amount(match.group(1)) for match in debits), 2),
+            credits=round(sum(parse_amount(match.group(1)) for match in credits), 2),
+        )

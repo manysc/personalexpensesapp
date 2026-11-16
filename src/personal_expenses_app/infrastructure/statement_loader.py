@@ -20,6 +20,7 @@ from personal_expenses_app.core.rule_based_expense_categorizer import (
 from personal_expenses_app.infrastructure.pdf_text import extract_page_texts
 from personal_expenses_app.infrastructure.s3_storage import get_object_bytes
 from personal_expenses_app.infrastructure.statement_period import StatementPeriod, statement_period
+from personal_expenses_app.infrastructure.statement_reconciliation import Reconciliation, StatementTotals
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ COLUMNS = ["Date", "Description", "Debit", "Credit", "Bank"]
 
 
 class Transaction(NamedTuple):
-    """One statement line. Statements print dates without a year, hence month and day."""
+    """One statement line. Statements print dates without a year, hence month and day.
+
+    Amounts are in the statement's currency.
+    """
 
     month: int
     day: int
@@ -48,6 +52,13 @@ def parse_amount(text: str) -> float:
     return float(text.replace(",", "").replace("$", ""))
 
 
+def totals_of(transactions: Sequence[Transaction]) -> StatementTotals:
+    """Add up the transactions read from a statement."""
+    debits = [t.debit for t in transactions if t.debit is not None]
+    credits = [t.credit for t in transactions if t.credit is not None]
+    return StatementTotals(round(sum(debits), 2), round(sum(credits), 2), len(debits), len(credits))
+
+
 class StatementLoader(ABC):
     """Loads the transactions of one bank's statement PDFs.
 
@@ -55,12 +66,29 @@ class StatementLoader(ABC):
     """
 
     bank: ClassVar[str]
+    currency: ClassVar[str] = "USD"
     # A statement without transactions normally means its layout was not understood.
     fail_when_empty: ClassVar[bool] = True
 
     @abstractmethod
     def _parse_transactions(self, page_texts: Sequence[str], period: StatementPeriod) -> list[Transaction]:
         """Read the transactions out of the statement's non-empty pages, in page order."""
+
+    @abstractmethod
+    def _printed_totals(self, page_texts: Sequence[str]) -> Optional[StatementTotals]:
+        """Return the totals the statement prints for its transactions, or None if not found.
+
+        They must come from the statement's summary, not from the lines the parser reads
+        as transactions, so that they are an independent check.
+        """
+
+    def _note(self, page_texts: Sequence[str]) -> str:
+        """Return a remark to show with the reconciliation, e.g. about a part left out on purpose."""
+        return ""
+
+    def _to_dollars(self, amount: float) -> float:
+        """Convert an amount in the statement's currency to US dollars."""
+        return amount
 
     def load_expenses_and_credits(self, key: str) -> pd.DataFrame:
         """Load every transaction of the statement stored under ``key``."""
@@ -95,24 +123,38 @@ class StatementLoader(ABC):
         return pd.concat(labeled, ignore_index=True)
 
     def parse_statement(self, key: str, page_texts: Sequence[str]) -> pd.DataFrame:
-        """Build the statement's DataFrame from its already-extracted page texts."""
+        """Build the statement's DataFrame from its page texts, reporting whether it adds up."""
+        df, reconciliation = self.read_statement(key, page_texts)
+        print(reconciliation.describe())
+        return df
+
+    def read_statement(self, key: str, page_texts: Sequence[str]) -> tuple[pd.DataFrame, Reconciliation]:
+        """Return the statement's DataFrame and how it compares with the statement's own totals."""
         period = statement_period(self.bank, page_texts[0] if page_texts else "", key)
-        transactions = self._parse_transactions([text for text in page_texts if text], period)
+        pages = [text for text in page_texts if text]
+        transactions = self._parse_transactions(pages, period)
+        reconciliation = Reconciliation(
+            key, totals_of(transactions), self._printed_totals(pages), self.currency, self._note(pages)
+        )
         if not transactions:
             logger.warning("No transactions found in PDF: %s", key)
-            if self.fail_when_empty:
+            # Fine if the statement itself says nothing happened; otherwise it was not understood.
+            if self.fail_when_empty and not reconciliation.matches:
                 raise ValueError(f"No transactions found in PDF: {key}")
-        return self._to_frame(transactions, period)
+        return self._to_frame(transactions, period), reconciliation
 
     def _to_frame(self, transactions: Sequence[Transaction], period: StatementPeriod) -> pd.DataFrame:
+        def dollars(amount: Optional[float]) -> Optional[float]:
+            return None if amount is None else self._to_dollars(amount)
+
         dates = [f"{t.month}/{t.day}/{period.year_of(t.month)}" for t in transactions]
         df = pd.DataFrame(
             {
                 # An impossible date (e.g. from a garbled line) becomes NaT rather than an error.
                 "Date": pd.to_datetime(dates, format="%m/%d/%Y", errors="coerce"),
                 "Description": [t.description for t in transactions],
-                "Debit": pd.Series([t.debit for t in transactions], dtype="float64"),
-                "Credit": pd.Series([t.credit for t in transactions], dtype="float64"),
+                "Debit": pd.Series([dollars(t.debit) for t in transactions], dtype="float64"),
+                "Credit": pd.Series([dollars(t.credit) for t in transactions], dtype="float64"),
                 "Bank": self.bank,
             },
             columns=COLUMNS,
