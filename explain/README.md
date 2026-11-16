@@ -86,7 +86,7 @@ Imports monthly statements, categorizes transactions, and tracks expenses, recei
 
 - `uv sync`
 - `docker compose up -d postgres seaweedfs`
-- `$env:S3_ENDPOINT_URL="http://localhost:8333"; uv run uvicorn personal_expenses_app.api.app:app --reload`
+- `$env:S3_ENDPOINT_URL="http://localhost:8333"; uv run python -m personal_expenses_app.serve` (uvicorn with `--reload`, plus backups when it stops)
 - `uv run --with pytest pytest tests` (only file: `tests/test_rule_based_expense_categorizer.py`)
 - `cd frontend; npm install; npm run dev`, plus `npm run lint` and `npm run build`. The frontend has no test suite.
 

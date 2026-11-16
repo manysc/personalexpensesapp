@@ -112,9 +112,11 @@ services:
     restart: unless-stopped
 
   # Periodically backs up the "expenses-documents" SeaweedFS bucket to a
-  # local timestamped tar.gz under ./backups/s3/. Runs once immediately,
-  # then repeats every S3_BACKUP_INTERVAL_DAYS (default 30, override via
-  # a .env S3_BACKUP_INTERVAL_DAYS=<days>).
+  # timestamped tar.gz under S3_BACKUP_HOST_DIR (default ./backups/s3/).
+  # Runs once immediately, then every S3_BACKUP_INTERVAL_DAYS (default 30),
+  # and once more when the container is stopped (`docker compose stop`/`down`;
+  # turn off with S3_BACKUP_ON_STOP=false). Compose stops it before
+  # `seaweedfs`, and stop_grace_period gives the final backup time to finish.
   s3-backup:
     build:
       context: .
@@ -124,18 +126,28 @@ services:
       S3_ENDPOINT_URL: http://seaweedfs:8333
       S3_CONFIG_PATH: /app/s3.json
       S3_BACKUP_INTERVAL_DAYS: ${S3_BACKUP_INTERVAL_DAYS:-30}
+      S3_BACKUP_ON_STOP: ${S3_BACKUP_ON_STOP:-true}
+      S3_BACKUP_SKIP_UNCHANGED: ${S3_BACKUP_SKIP_UNCHANGED:-true}
     volumes:
       - ./s3.json:/app/s3.json:ro
-      - ./backups/s3:/app/backups/s3
+      - type: bind
+        source: ${S3_BACKUP_HOST_DIR:-./backups/s3}
+        target: /app/backups/s3
+        bind:
+          create_host_path: true
+    stop_grace_period: 5m
     depends_on:
       seaweedfs:
         condition: service_healthy
     restart: unless-stopped
 
   # Periodically backs up the "expensesassistant" postgres database to a
-  # local timestamped gzip-compressed SQL dump under ./backups/postgres/.
-  # Runs once immediately, then repeats every POSTGRES_BACKUP_INTERVAL_DAYS
-  # (default 30, override via a .env POSTGRES_BACKUP_INTERVAL_DAYS=<days>).
+  # timestamped gzip-compressed SQL dump under POSTGRES_BACKUP_HOST_DIR
+  # (default ./backups/postgres/). Runs once immediately, then every
+  # POSTGRES_BACKUP_INTERVAL_DAYS (default 30), and once more when the
+  # container is stopped (`docker compose stop`/`down`; turn off with
+  # POSTGRES_BACKUP_ON_STOP=false). Compose stops it before `postgres`, and
+  # stop_grace_period gives the final dump time to finish.
   pg-backup:
     build:
       context: .
@@ -148,8 +160,15 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       PGDATABASE: expensesassistant
       POSTGRES_BACKUP_INTERVAL_DAYS: ${POSTGRES_BACKUP_INTERVAL_DAYS:-30}
+      POSTGRES_BACKUP_ON_STOP: ${POSTGRES_BACKUP_ON_STOP:-true}
+      POSTGRES_BACKUP_SKIP_UNCHANGED: ${POSTGRES_BACKUP_SKIP_UNCHANGED:-true}
     volumes:
-      - ./backups/postgres:/app/backups/postgres
+      - type: bind
+        source: ${POSTGRES_BACKUP_HOST_DIR:-./backups/postgres}
+        target: /app/backups/postgres
+        bind:
+          create_host_path: true
+    stop_grace_period: 5m
     depends_on:
       postgres:
         condition: service_healthy

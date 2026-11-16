@@ -14,7 +14,7 @@ Backend (Python ≥3.11, uv-managed `.venv`, package installed editable from `sr
 uv sync
 docker compose up -d postgres seaweedfs          # DB + S3 storage the backend needs
 $env:S3_ENDPOINT_URL = "http://localhost:8333"   # s3.json points at the in-network "seaweedfs" host
-uv run uvicorn personal_expenses_app.api.app:app --reload   # http://localhost:8000
+uv run python -m personal_expenses_app.serve   # uvicorn --reload on http://localhost:8000; backs up Postgres + SeaweedFS when it stops
 ```
 
 Requires `.env` (`DATABASE_URL`, see `.env.example`) and `s3.json` (copy `s3.json.example`); both are gitignored. The backend runs on the host: `docker-compose.yml` references a `Dockerfile.backend` that does not exist, so don't `docker compose up` the `backend`/`frontend` services without adding it.

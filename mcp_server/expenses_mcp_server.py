@@ -3,6 +3,7 @@
 # dependencies = [
 #     "mcp>=2.3,<3",
 #     "httpx>=0.27",
+#     "psutil>=6",
 # ]
 # ///
 """MCP server for the Personal Expenses app.
@@ -15,20 +16,32 @@ Run (stdio transport):
     uv run --script mcp_server/expenses_mcp_server.py
 
 Environment:
-    EXPENSES_API_URL      Backend base URL (default http://localhost:8000)
-    EXPENSES_API_TIMEOUT  Request timeout in seconds (default 30)
+    EXPENSES_API_URL        Backend base URL (default http://localhost:8000)
+    EXPENSES_API_TIMEOUT    Request timeout in seconds (default 30)
+    EXPENSES_FRONTEND_PORT  Frontend port for restart_app/get_app_status (default 3000)
+    EXPENSES_REPO_DIR       Repo root (default: the parent of this script's folder)
+    EXPENSES_LOG_DIR        Where restart_app writes backend.log/frontend.log (default <repo>/logs)
+    EXPENSES_UV, EXPENSES_NPM, EXPENSES_DOCKER  Full paths to uv/npm/docker when they are not on PATH
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import os
+import re
+import shutil
+import subprocess
+import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
+import psutil
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -56,6 +69,10 @@ Domain notes:
 
 For yearly or category totals prefer get_spending_summary (aggregated server-side) over paging
 through list_expenses. Confirm with the user before deleting anything.
+
+If a tool says the backend cannot be reached, or after backend/frontend code changes that need a
+restart, use restart_app (get_app_status shows what is running). To close the app, use stop_app:
+it backs up Postgres and SeaweedFS before stopping the backend.
 """
 
 mcp = MCPServer("expenses", instructions=INSTRUCTIONS)
@@ -90,9 +107,9 @@ def _request(
             resp = client.request(method, url, params=_clean(params or {}), json=json, files=files)
     except httpx.ConnectError as e:
         raise ExpensesApiError(
-            f"Cannot reach the expenses backend at {API_URL}. Start it with "
-            "`uv run uvicorn personal_expenses_app.api.app:app --reload` (and `docker compose up -d "
-            f"postgres seaweedfs`). Details: {e}"
+            f"Cannot reach the expenses backend at {API_URL}. Start it with the restart_app tool "
+            "(target='backend') or `uv run uvicorn personal_expenses_app.api.app:app --reload`; it also "
+            f"needs `docker compose up -d postgres seaweedfs`. Details: {e}"
         ) from e
     except httpx.TimeoutException as e:
         raise ExpensesApiError(f"Request to {url} timed out after {timeout or TIMEOUT}s") from e
@@ -569,6 +586,334 @@ def run_import_pipeline(
         ),
         timeout=max(TIMEOUT, 600),
     )
+
+
+# --------------------------------------------------------------------------- app processes
+#
+# The backend (uvicorn) and the frontend (Next.js dev server) run on the host, not in Docker.
+# restart_app stops whatever is listening on their ports and starts a fresh copy in the
+# background, detached from this server, with its output in logs/<app>.log.
+
+REPO_DIR = Path(os.environ.get("EXPENSES_REPO_DIR") or Path(__file__).resolve().parent.parent)
+LOG_DIR = Path(os.environ.get("EXPENSES_LOG_DIR") or REPO_DIR / "logs")
+BACKEND_PORT = int(os.environ.get("EXPENSES_BACKEND_PORT") or urlsplit(API_URL).port or 8000)
+FRONTEND_PORT = int(os.environ.get("EXPENSES_FRONTEND_PORT") or 3000)
+
+AppName = Literal["backend", "frontend"]
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _proc_name(p: psutil.Process) -> str:
+    try:
+        return p.name().lower().removesuffix(".exe")
+    except psutil.Error:
+        return ""
+
+
+def _is_launcher(p: psutil.Process) -> bool:
+    """True for processes that belong to a dev server's tree (interpreters and launchers).
+
+    cmd.exe counts only when node started it (npm runs scripts through it); a cmd.exe the user
+    typed into is a terminal and must survive.
+    """
+    name = _proc_name(p)
+    if name.startswith("python") or name in {"uv", "uvicorn", "node", "npm", "npx"}:
+        return True
+    if name == "cmd":
+        try:
+            parent = p.parent()
+        except psutil.Error:
+            return False
+        return parent is not None and _proc_name(parent) == "node"
+    return False
+
+
+def _listeners(port: int) -> list[psutil.Process]:
+    """Processes listening on a local TCP port."""
+    pids: set[int] = set()
+    try:
+        for c in psutil.net_connections(kind="tcp"):
+            if c.pid and c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN:
+                pids.add(c.pid)
+    except psutil.AccessDenied:  # some platforms need root for the global table; scan per process
+        for p in psutil.process_iter():
+            try:
+                if any(c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN
+                       for c in p.net_connections(kind="tcp")):
+                    pids.add(p.pid)
+            except psutil.Error:
+                continue
+    procs = []
+    for pid in pids:
+        try:
+            procs.append(psutil.Process(pid))
+        except psutil.Error:
+            continue
+    return procs
+
+
+def _server_root(proc: psutil.Process, protected: set[int]) -> psutil.Process:
+    """Walk up from the listening process to the uv/npm process that launched it.
+
+    Stops at the first parent that is not part of the server (the terminal or IDE it was started
+    from) and never climbs into this MCP server or its ancestors.
+    """
+    top = proc
+    while True:
+        try:
+            parent = top.parent()
+        except psutil.Error:
+            break
+        if parent is None or parent.pid in protected or not _is_launcher(parent):
+            break
+        top = parent
+    return top
+
+
+def _stop(port: int) -> list[int]:
+    """Stop every process tree serving `port`; returns the pids stopped."""
+    me = psutil.Process()
+    protected = {me.pid} | {p.pid for p in me.parents()}
+    roots = {r.pid: r for r in (_server_root(p, protected) for p in _listeners(port))}
+    procs: dict[int, psutil.Process] = {}
+    for root in roots.values():
+        try:
+            procs.update({c.pid: c for c in root.children(recursive=True)})
+        except psutil.Error:
+            pass
+        procs[root.pid] = root
+    for pid in protected:
+        procs.pop(pid, None)
+    for p in procs.values():
+        try:
+            p.terminate()
+        except psutil.Error:
+            pass
+    _, alive = psutil.wait_procs(list(procs.values()), timeout=5)
+    for p in alive:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(alive, timeout=5)
+
+    deadline = time.monotonic() + 10
+    while _listeners(port):
+        if time.monotonic() > deadline:
+            pids = ", ".join(str(p.pid) for p in _listeners(port))
+            raise ToolError(f"Port {port} is still in use by pid {pids} after stopping the old server.")
+        time.sleep(0.5)
+    return sorted(procs)
+
+
+def _app_spec(app: AppName) -> dict[str, Any]:
+    if app == "backend":
+        uv = os.environ.get("EXPENSES_UV") or shutil.which("uv")
+        if not uv:
+            raise ToolError("Cannot find `uv` on PATH; set EXPENSES_UV to its full path in the MCP config.")
+        return dict(
+            port=BACKEND_PORT,
+            url=API_URL,
+            health_url=f"{API_URL}/openapi.json",
+            cwd=REPO_DIR,
+            # = `uvicorn personal_expenses_app.api.app:app --reload`, plus Postgres/SeaweedFS backups
+            # when the server stops gracefully (see src/personal_expenses_app/serve.py).
+            cmd=[uv, "run", "python", "-m", "personal_expenses_app.serve", "--port", str(BACKEND_PORT)],
+            # s3.json names the in-network "seaweedfs" host; from the host it is localhost:8333.
+            env={"S3_ENDPOINT_URL": os.environ.get("S3_ENDPOINT_URL", "http://localhost:8333")},
+        )
+    npm = os.environ.get("EXPENSES_NPM") or shutil.which("npm")
+    if not npm:
+        raise ToolError("Cannot find `npm` on PATH; set EXPENSES_NPM to its full path in the MCP config.")
+    return dict(
+        port=FRONTEND_PORT,
+        url=f"http://localhost:{FRONTEND_PORT}",
+        health_url=None,  # next dev compiles pages on first request; a listening port means it is up
+        cwd=REPO_DIR / "frontend",
+        cmd=[npm, "run", "dev", "--", "--port", str(FRONTEND_PORT)],
+        env={},
+    )
+
+
+def _child_env(extra: dict[str, str]) -> dict[str, str]:
+    """This server's environment minus its own uv script environment, plus `extra`."""
+    env = dict(os.environ)
+    for key in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH"):
+        env.pop(key, None)
+    prefix = os.path.normcase(os.path.abspath(sys.prefix))
+    env["PATH"] = os.pathsep.join(
+        d for d in env.get("PATH", "").split(os.pathsep)
+        if d and not os.path.normcase(os.path.abspath(d)).startswith(prefix)
+    )
+    # Unbuffered UTF-8 output so the log is current and pipeline prints of non-ASCII text don't fail.
+    env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", **extra)
+    return env
+
+
+def _start(app: AppName, spec: dict[str, Any]) -> subprocess.Popen:
+    """Start the app in the background with its output in LOG_DIR/<app>.log."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LOG_DIR / f"{app}.log", "wb") as log:
+        kwargs: dict[str, Any] = dict(
+            cwd=spec["cwd"], env=_child_env(spec["env"]),
+            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,  # never this server's stdio
+        )
+        if os.name == "nt":
+            # Hidden console that npm/node children inherit (DETACHED_PROCESS would make them pop
+            # up windows); breaking away from the desktop app's job lets it outlive this server.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            try:
+                return subprocess.Popen(spec["cmd"], creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kwargs)
+            except OSError:
+                return subprocess.Popen(spec["cmd"], creationflags=flags, **kwargs)
+        return subprocess.Popen(spec["cmd"], start_new_session=True, **kwargs)
+
+
+def _log_tail(app: AppName, lines: int) -> str | None:
+    path = LOG_DIR / f"{app}.log"
+    if lines <= 0 or not path.exists():
+        return None
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, fh.tell() - 64 * 1024))
+        text = fh.read().decode("utf-8", errors="replace")
+    return "\n".join(_ANSI.sub("", text).splitlines()[-lines:])
+
+
+async def _wait_ready(spec: dict[str, Any], proc: subprocess.Popen, wait_seconds: float) -> str:
+    deadline = time.monotonic() + wait_seconds
+    async with httpx.AsyncClient(timeout=2) as client:
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                return "exited"
+            if spec["health_url"]:
+                try:
+                    if (await client.get(spec["health_url"])).status_code < 500:
+                        return "running"
+                except httpx.HTTPError:
+                    pass
+            elif await asyncio.to_thread(_listeners, spec["port"]):
+                return "running"
+            await asyncio.sleep(1)
+    return "starting"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def restart_app(target: Literal["backend", "frontend", "both"] = "both", wait_seconds: int = 60) -> dict[str, Any]:
+    """Restart the app's backend (FastAPI, port 8000) and/or frontend (Next.js dev server, port 3000).
+
+    Stops whatever serves the port, including the uv/npm process that launched it (the terminal it
+    was started from stays open), then starts it again in the background: the backend with
+    `uv run python -m personal_expenses_app.serve` (uvicorn with --reload) and S3_ENDPOINT_URL
+    pointing at localhost:8333, the frontend with `npm run dev`. Restarting does not back up;
+    use stop_app to close the app with a backup. Starts it if it was not running. Output goes to
+    logs/backend.log and logs/frontend.log in the repo. Postgres and SeaweedFS (Docker) are untouched.
+
+    Waits up to `wait_seconds` per app. Returns per app: `status` ("running"; "starting" if still not
+    up, e.g. a startup error the --reload watcher is sitting on; "exited" if it crashed), `stopped_pids`,
+    `pid` of the new launcher, `url`, `log`, and the log's last lines when it is not running.
+    """
+    apps: list[AppName] = ["backend", "frontend"] if target == "both" else [target]
+    result: dict[str, Any] = {}
+    for app in apps:
+        spec = _app_spec(app)
+        stopped = await asyncio.to_thread(_stop, spec["port"])
+        proc = _start(app, spec)
+        status = await _wait_ready(spec, proc, max(1, wait_seconds))
+        result[app] = _clean(dict(
+            status=status,
+            stopped_pids=stopped,
+            pid=proc.pid,
+            url=spec["url"],
+            log=str(LOG_DIR / f"{app}.log"),
+            log_tail=None if status == "running" else _log_tail(app, 40),
+        ))
+    return result
+
+
+# The scripts the pg-backup / s3-backup compose services run on a schedule, run once inside their
+# containers. Mirrors src/personal_expenses_app/infrastructure/app_backup.py (this script can't
+# import the app package).
+_BACKUP_JOBS = (
+    ("Postgres", "pg-backup", ["/app/backup_postgres_db.sh", "--once"]),
+    ("SeaweedFS", "s3-backup", ["python", "scripts/backup_s3_bucket.py", "--once"]),
+)
+
+
+def _compose(docker: str, args: list[str], timeout: float) -> subprocess.CompletedProcess:
+    kwargs: dict[str, Any] = dict(
+        cwd=REPO_DIR, stdin=subprocess.DEVNULL, capture_output=True,
+        text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return subprocess.run([docker, "compose", *args], **kwargs)
+
+
+def _run_backups() -> list[dict[str, Any]]:
+    """Back up Postgres, then SeaweedFS; each entry has `name`, `ok` and the script's `output`."""
+    docker = os.environ.get("EXPENSES_DOCKER") or shutil.which("docker")
+    if not docker:
+        raise ToolError("Cannot find `docker` on PATH; set EXPENSES_DOCKER to its full path in the MCP config.")
+    ps = _compose(docker, ["ps", "--status", "running", "--services"], timeout=30)
+    running = set(ps.stdout.split()) if ps.returncode == 0 else set()
+    results = []
+    for name, service, command in _BACKUP_JOBS:
+        if service in running:
+            args = ["exec", "-T", service, *command]
+        else:  # the service's container isn't up: run its entrypoint script once in a new one
+            args = ["run", "--rm", "--no-deps", "-T", service, "--once"]
+        try:
+            r = _compose(docker, args, timeout=300)
+            ok, output = r.returncode == 0, "\n".join(x.strip() for x in (r.stdout, r.stderr) if x.strip())
+        except subprocess.TimeoutExpired:
+            ok, output = False, "timed out after 300s"
+        results.append(dict(name=name, ok=ok, output=_ANSI.sub("", output)))
+    return results
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def stop_app(target: Literal["backend", "frontend", "both"] = "both", backup: bool = True) -> dict[str, Any]:
+    """Close the app: stop the backend (port 8000) and/or frontend (port 3000), backing up first.
+
+    Before stopping the backend, backs up Postgres and SeaweedFS by running the pg-backup and
+    s3-backup services' scripts once in their containers (written to POSTGRES_BACKUP_HOST_DIR /
+    S3_BACKUP_HOST_DIR from .env). If a backup fails nothing is stopped; call again with
+    backup=False to stop anyway. Postgres and SeaweedFS (Docker) keep running.
+
+    Returns `backups` (per backup: `name`, `ok`, `output`) and, per app, `stopped_pids`.
+    """
+    apps: list[AppName] = ["backend", "frontend"] if target == "both" else [target]
+    result: dict[str, Any] = {}
+    if backup and "backend" in apps:
+        backups = await asyncio.to_thread(_run_backups)
+        result["backups"] = backups
+        if not all(b["ok"] for b in backups):
+            result["stopped"] = False
+            result["message"] = "A backup failed, so nothing was stopped. Call stop_app with backup=False to stop anyway."
+            return result
+    for app in apps:
+        spec_port = BACKEND_PORT if app == "backend" else FRONTEND_PORT
+        result[app] = dict(stopped_pids=await asyncio.to_thread(_stop, spec_port))
+    return result
+
+
+@mcp.tool(annotations=READ)
+def get_app_status(log_lines: int = 0) -> dict[str, Any]:
+    """Whether the backend (port 8000) and frontend (port 3000) are running.
+
+    Per app: `running`, the `pids` listening on its port, its `url`, and the log file restart_app
+    writes to. Pass `log_lines` > 0 to include that many lines from the end of each log (only
+    servers started by restart_app write there).
+    """
+    result: dict[str, Any] = {}
+    for app, port, url in (("backend", BACKEND_PORT, API_URL), ("frontend", FRONTEND_PORT, f"http://localhost:{FRONTEND_PORT}")):
+        pids = sorted(p.pid for p in _listeners(port))
+        result[app] = _clean(dict(
+            running=bool(pids), pids=pids, url=url,
+            log=str(LOG_DIR / f"{app}.log"), log_tail=_log_tail(app, log_lines),
+        ))
+    return result
 
 
 def main() -> None:

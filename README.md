@@ -58,7 +58,7 @@ uv sync
 
 ```powershell
 $env:S3_ENDPOINT_URL = "http://localhost:8333"   # s3.json uses the Docker-only host "seaweedfs"
-uv run uvicorn personal_expenses_app.api.app:app --reload
+uv run python -m personal_expenses_app.serve   # uvicorn with --reload; backs up when it stops
 ```
 
 Instead of setting `S3_ENDPOINT_URL` each time, you can uncomment it in `.env`.
@@ -122,7 +122,7 @@ The frontend uses `OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLA
 
 ## Claude Connection (MCP Server)
 
-`mcp_server/expenses_mcp_server.py` is an MCP server that lets Claude read and update your data through the backend API. It needs the backend running on port 8000 and [uv](https://docs.astral.sh/uv/). It declares its own dependencies (`mcp`, `httpx`), so it does not touch the app's `.venv`.
+`mcp_server/expenses_mcp_server.py` is an MCP server that lets Claude read and update your data through the backend API. It needs the backend running on port 8000 and [uv](https://docs.astral.sh/uv/). It declares its own dependencies (`mcp`, `httpx`, `psutil`), so it does not touch the app's `.venv`.
 
 Add it to the Claude desktop app (**Settings → Developer → Edit Config**, file `%APPDATA%\Claude\claude_desktop_config.json`), inside `"mcpServers"`:
 
@@ -140,7 +140,7 @@ How it runs:
 
 - You don't start it yourself. The Claude desktop app launches it in the background when the app opens, using the `command`/`args` above, and stops it when the app quits.
 - It talks to Claude over standard input/output (no port of its own); each tool call becomes an HTTP request to the backend at `EXPENSES_API_URL`.
-- On first launch `uv` installs `mcp` and `httpx` into a cached environment of its own; later launches reuse it.
+- On first launch `uv` installs `mcp`, `httpx` and `psutil` into a cached environment of its own; later launches reuse it.
 - The backend (port 8000) plus Postgres and SeaweedFS must be running, or tools return a "Cannot reach the expenses backend" error.
 - After editing `expenses_mcp_server.py` or the config, fully quit and reopen the Claude desktop app to load the changes.
 
@@ -149,6 +149,11 @@ Tools:
 - **Read:** `list_expenses`, `get_expense`, `get_spending_summary` (totals by month/category/property), `get_property_summary`, `list_commented_expenses`, `list_action_items`, `reconcile_statements` (statements vs their printed totals vs the database), `list_categories`, `list_banks`, `list_rental_properties`, `list_vehicles`, `list_vehicle_services`, `list_statement_months`
 - **Write:** `create_expense`, `update_expense`, `set_expense_category`, `bulk_update_expenses`, `attach_receipt`, `resolve_action_item`, `create_category`, `update_category`, `create_rental_property`, `update_rental_property`, `sync_property_expenses`, `create_vehicle`, `update_vehicle`, `add_vehicle_service`, `update_vehicle_service`, `upload_statement`, `run_import_pipeline`
 - **Delete** (marked destructive): `delete_expense`, `delete_receipt`, `delete_category`, `delete_rental_property`, `delete_vehicle`, `delete_vehicle_service`
+- **App processes:** `restart_app` (target `backend`, `frontend` or `both`), `stop_app` (backs up, then stops), `get_app_status`
+
+`restart_app` stops whatever is listening on port 8000 (backend) or 3000 (frontend), along with the `uv`/`npm` process that launched it (the terminal you started it from stays open), and starts it again in the background: the backend with `uv run python -m personal_expenses_app.serve` and `S3_ENDPOINT_URL=http://localhost:8333`, the frontend with `npm run dev`. It starts them if they weren't running, waits until they answer, and returns the last log lines if one fails to start. Their output goes to `logs/backend.log` and `logs/frontend.log` (gitignored) rather than a terminal. Postgres and SeaweedFS still need `docker compose up -d postgres seaweedfs`. If `uv` or `npm` isn't on the PATH the Claude desktop app gives the server, set `EXPENSES_UV` / `EXPENSES_NPM` to their full paths in the config's `env`.
+
+`stop_app` closes the app: before stopping the backend it backs up Postgres and SeaweedFS (see [Backups](#backups)), and if a backup fails it stops nothing unless called with `backup=False`. Restarting doesn't back up. Set `EXPENSES_DOCKER` if `docker` isn't on the PATH.
 
 Test it without Claude: `npx @modelcontextprotocol/inspector uv run --script mcp_server/expenses_mcp_server.py`.
 
@@ -163,13 +168,35 @@ Start them with `docker compose up -d seaweedfs-admin pg_admin`.
 
 ## Backups
 
-Two Docker services make backups automatically. Each runs once at startup and then every 30 days:
+Two Docker services make backups automatically. Each runs once at startup, then every 30 days, and once more when its container is stopped. Their scripts also run when the app closes (below).
 
-- `pg-backup`: dumps the `expensesassistant` database to `backups/postgres/` as gzipped SQL. Change the interval with `POSTGRES_BACKUP_INTERVAL_DAYS` in `.env`.
-- `s3-backup`: archives the `expenses-documents` bucket to `backups/s3/`. Change the interval with `S3_BACKUP_INTERVAL_DAYS` in `.env`.
+- `pg-backup`: dumps the `expensesassistant` database (Postgres) as gzipped SQL to `POSTGRES_BACKUP_HOST_DIR` (default `backups/postgres/`). Change the interval with `POSTGRES_BACKUP_INTERVAL_DAYS` in `.env`.
+- `s3-backup`: archives the `expenses-documents` bucket (SeaweedFS) as a tar.gz to `S3_BACKUP_HOST_DIR` (default `backups/s3/`). Change the interval with `S3_BACKUP_INTERVAL_DAYS` in `.env`.
+
+The stop-time backup runs on `docker compose stop` or `docker compose down` (or stopping the project in Docker Desktop). Compose stops each backup service before the `postgres`/`seaweedfs` service it depends on, so they are still up, and `stop_grace_period: 5m` gives the backup time to finish. Turn it off with `POSTGRES_BACKUP_ON_STOP=false` / `S3_BACKUP_ON_STOP=false` in `.env`. A backup is written as `<name>.partial` and renamed when complete, so a cut-off one never looks finished.
+
+Nothing is written when nothing changed since the newest backup in the folder: the Postgres dump is compared with the newest dump (ignoring the random `\restrict` key `pg_dump` adds), and the bucket's objects (names, sizes, modification times or MD5s) with the newest archive, before anything is downloaded. The log says `no changes since <file>; skipped`. Turn this off with `POSTGRES_BACKUP_SKIP_UNCHANGED=false` / `S3_BACKUP_SKIP_UNCHANGED=false` in `.env`. Quitting Docker Desktop or shutting Windows down without stopping the project first may not leave time for it.
+
+### Backup when the app closes
+
+Started with `uv run python -m personal_expenses_app.serve` (or the MCP `restart_app`), the backend runs both backup scripts once when it stops, before exiting: `scripts/backup_postgres_db.sh --once` in the `pg-backup` container and `scripts/backup_s3_bucket.py --once` in the `s3-backup` container (`docker compose exec`, or a one-off `docker compose run` of the service when its container isn't running). They write to the same folders as the scheduled backups.
+
+- Ctrl+C / Ctrl+Break: runs both backups and waits for them. Code reloads (`--reload`) don't back up.
+- Closing the terminal window, signing out or shutting Windows down: Windows gives the process only a few seconds, so the backups are started in their containers and finish there.
+- MCP `stop_app`: backs up, then stops the backend.
+- Killed outright (Task Manager's End task, `restart_app`): no backup.
+
+Docker must be running, with Postgres and SeaweedFS up. Turn it off with `BACKUP_ON_APP_EXIT=false` in `.env`.
+
+To write the backups somewhere else (e.g. OneDrive), set the folders in `.env` (quote paths with spaces):
+
+```
+POSTGRES_BACKUP_HOST_DIR="C:/path/to/_backups/Postgres"
+S3_BACKUP_HOST_DIR="C:/path/to/_backups/S3"
+```
 
 ```powershell
-docker compose up -d pg-backup s3-backup
+docker compose up -d --build pg-backup s3-backup   # --build after changing scripts/backup_*
 ```
 
 Manual database dump:

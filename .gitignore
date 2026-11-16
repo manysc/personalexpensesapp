@@ -23,3 +23,6 @@ backups/postgres/
 
 # SeaweedFS S3 credentials (copy seaweedfs/identities.json.example)
 seaweedfs/identities.json
+
+# Output of servers started by the MCP restart_app tool
+logs/
